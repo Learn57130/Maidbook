@@ -188,7 +188,7 @@ class TUI:
             self.log.append((f"→  {c.name:<22} working…", 5))
             try:
                 freed, errs, msg = c.clean(self.dry_run)
-            except Exception as e:
+            except (OSError, subprocess.SubprocessError, RuntimeError) as e:
                 self.log[-1] = (f"✗  {c.name:<22} error: {e}", 4)
                 total_errs += 1
                 self.clean_progress += 1
@@ -228,7 +228,8 @@ class TUI:
         def _one(mod: HealthModule):
             try:
                 return mod, mod.scan()
-            except Exception as e:
+            except (OSError, subprocess.SubprocessError, RuntimeError,
+                    ValueError) as e:
                 return mod, [Finding(mod.key, "info",
                                      f"{mod.name} error", str(e))]
 

@@ -117,21 +117,24 @@ def scan_xprotect() -> list[Finding]:
         version = str(data.get("CFBundleShortVersionString") or "?")
         mtime = plist_path.stat().st_mtime
         days = int((time.time() - mtime) / 86400)
-        if days > 45:
-            out.append(Finding(
-                "xprotect", "caution",
-                f"XProtect is stale ({days}d old)",
-                f"version {version}; Apple normally pushes updates every few weeks",
-                remediation="System Settings → Software Update",
-            ))
-        else:
-            out.append(Finding(
-                "xprotect", "ok",
-                f"XProtect up to date ({days}d old)",
-                f"version {version}",
-            ))
-    except Exception as e:
+    except (OSError, plistlib.InvalidFileException, ValueError) as e:
         out.append(Finding("xprotect", "info", "XProtect read error", str(e)))
+        return out
+
+    if days > 45:
+        out.append(Finding(
+            "xprotect", "caution",
+            f"XProtect is stale ({days}d old)",
+            f"version {version}; Apple normally pushes updates every few weeks",
+            remediation="System Settings → Software Update",
+        ))
+        return out
+
+    out.append(Finding(
+        "xprotect", "ok",
+        f"XProtect up to date ({days}d old)",
+        f"version {version}",
+    ))
     return out
 
 
@@ -333,6 +336,9 @@ def scan_vulnerabilities() -> list[Finding]:
     elif rc == 0:
         try:
             data = _json.loads(stdout or "[]")
+        except _json.JSONDecodeError:
+            out.append(Finding("vulns", "info", "pip-audit: parse error", ""))
+        else:
             vulns = (data.get("vulnerabilities", data)
                      if isinstance(data, dict) else data)
             vuln_count = len(vulns) if isinstance(vulns, list) else 0
@@ -345,8 +351,6 @@ def scan_vulnerabilities() -> list[Finding]:
                 ))
             else:
                 out.append(Finding("vulns", "ok", "pip-audit: clean", ""))
-        except Exception:
-            out.append(Finding("vulns", "info", "pip-audit: parse error", ""))
 
     # brew outdated
     rc, stdout, _ = _run_quiet(["brew", "outdated", "--quiet"], timeout=30)
@@ -369,26 +373,24 @@ def scan_vulnerabilities() -> list[Finding]:
 
     # npm global outdated (exit 1 is "found outdated", not an error)
     rc, stdout, _ = _run_quiet(["npm", "outdated", "-g", "--json"], timeout=30)
-    if rc == 127:
-        pass
-    else:
+    if rc != 127:
         try:
             data = _json.loads(stdout) if stdout.strip() else {}
-            if isinstance(data, dict) and data:
-                pkgs = list(data.keys())
-                preview = ", ".join(pkgs[:5]) + (
-                    f", … (+{len(pkgs) - 5})" if len(pkgs) > 5 else ""
-                )
-                out.append(Finding(
-                    "vulns", "caution",
-                    f"npm (global): {len(pkgs)} outdated",
-                    preview,
-                    remediation="npm update -g",
-                ))
-            else:
-                out.append(Finding("vulns", "ok", "npm global: up to date", ""))
-        except Exception:
-            pass
+        except _json.JSONDecodeError:
+            data = None
+        if isinstance(data, dict) and data:
+            pkgs = list(data.keys())
+            preview = ", ".join(pkgs[:5]) + (
+                f", … (+{len(pkgs) - 5})" if len(pkgs) > 5 else ""
+            )
+            out.append(Finding(
+                "vulns", "caution",
+                f"npm (global): {len(pkgs)} outdated",
+                preview,
+                remediation="npm update -g",
+            ))
+        elif data == {}:
+            out.append(Finding("vulns", "ok", "npm global: up to date", ""))
 
     if not out:
         out.append(Finding(

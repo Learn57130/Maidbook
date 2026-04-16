@@ -14,7 +14,9 @@ import curses
 import sys
 
 from . import __version__
+from .cli import run_cli
 from .common import APP_NAME, APP_TAGLINE
+from .tui import run_tui
 
 
 def main() -> int:
@@ -33,19 +35,16 @@ def main() -> int:
     args = p.parse_args()
 
     if args.cli:
-        from .cli import run_cli
         run_cli(dry_run=args.dry_run, clean_all=args.all)
         return 0
 
     try:
-        from .tui import run_tui
         run_tui()
     except KeyboardInterrupt:
         return 0
     except curses.error as e:
         print(f"curses error: {e}")
         print("Falling back to CLI. Use --cli to skip the TUI next time.")
-        from .cli import run_cli
         run_cli(dry_run=args.dry_run, clean_all=args.all)
     return 0
 
