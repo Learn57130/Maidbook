@@ -17,7 +17,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable
 
-from .common import HOME, path_size, path_stats, rm_path, sum_stats, is_app_running
+from .common import HOME, fmt_path, is_app_running, path_size, rm_path
 
 
 @dataclass
@@ -26,8 +26,8 @@ class Category:
     name: str
     icon: str
     description: str
-    # scan() returns (total_bytes, file_count, dir_count)
-    scan: Callable[[], tuple[int, int, int]]
+    # scan() returns disk usage in bytes (via ``du -sk``).
+    scan: Callable[[], int]
     clean: Callable[[bool], tuple[int, int, str]]
     tags: set[str] = field(default_factory=set)
     requires_apps_closed: list[str] = field(default_factory=list)
@@ -36,6 +36,8 @@ class Category:
     #         "review"  = unknown / unverified — user should decide
     safety: str = "review"
     safety_note: str = ""
+    # Short, display-friendly directory path (home abbreviated to ``~``).
+    path_hint: str = ""
 
 
 # ---------------------------------------------------------------------------
@@ -163,14 +165,13 @@ def find_browser_cache_dirs(root: Path) -> list[Path]:
 def make_browser_cleaner(display: str, proc: str, rel: str):
     root = HOME / rel
 
-    def scan() -> tuple[int, int, int]:
+    def scan() -> int:
         targets = find_browser_cache_dirs(root)
         if not targets:
-            return 0, 0, 0
-        # Walk each Cache/Code Cache/GPUCache subdir in parallel — some
-        # browsers have 10+ of them (multiple profiles + service workers).
-        with ThreadPoolExecutor(max_workers=min(8, len(targets))) as pool:
-            return sum_stats(pool.map(path_stats, targets))
+            return 0
+        # ``du`` natively walks each subdir fast; parallelizing short calls
+        # adds more subprocess overhead than it saves. Sum inline.
+        return sum(path_size(t) for t in targets)
 
     def clean(dry: bool) -> tuple[int, int, str]:
         if is_app_running(proc) and not dry:
@@ -205,13 +206,13 @@ SAFE_CACHE_ITEMS = [
 ]
 
 
-def scan_safe_caches() -> tuple[int, int, int]:
+def scan_safe_caches() -> int:
     base = HOME / "Library/Caches"
     targets = [base / i for i in SAFE_CACHE_ITEMS if (base / i).exists()]
     if not targets:
-        return 0, 0, 0
+        return 0
     with ThreadPoolExecutor(max_workers=min(8, len(targets))) as pool:
-        return sum_stats(pool.map(path_stats, targets))
+        return sum(pool.map(path_size, targets))
 
 
 def clean_safe_caches(dry: bool) -> tuple[int, int, str]:
@@ -234,8 +235,8 @@ def clean_safe_caches(dry: bool) -> tuple[int, int, str]:
     return freed, errs, f"{verb} {count} items"
 
 
-def scan_dotcache() -> tuple[int, int, int]:
-    return path_stats(HOME / ".cache")
+def scan_dotcache() -> int:
+    return path_size(HOME / ".cache")
 
 
 def clean_dotcache(dry: bool) -> tuple[int, int, str]:
@@ -255,8 +256,8 @@ def clean_dotcache(dry: bool) -> tuple[int, int, str]:
     return freed, errs, f"{verb} {count} items"
 
 
-def scan_xcode() -> tuple[int, int, int]:
-    return path_stats(HOME / "Library/Developer/Xcode/DerivedData")
+def scan_xcode() -> int:
+    return path_size(HOME / "Library/Developer/Xcode/DerivedData")
 
 
 def clean_xcode(dry: bool) -> tuple[int, int, str]:
@@ -305,8 +306,8 @@ def discover_other_caches() -> list[tuple[str, Path]]:
 
 
 def make_discovered_cleaner(path: Path):
-    def scan() -> tuple[int, int, int]:
-        return path_stats(path)
+    def scan() -> int:
+        return path_size(path)
 
     def clean(dry: bool) -> tuple[int, int, str]:
         if not path.exists():
@@ -327,30 +328,36 @@ def make_discovered_cleaner(path: Path):
 def build_categories() -> list[Category]:
     cats: list[Category] = [
         Category("pip", "pip", "py", "Python pip download cache",
-                 lambda: path_stats(HOME / "Library/Caches/pip"),
+                 lambda: path_size(HOME / "Library/Caches/pip"),
                  clean_pip, tags={"safe", "dev"},
-                 safety="safe", safety_note="rebuilt on next pip install"),
-        Category("npm", "npm", "js", "Node npm cache (~/.npm)",
-                 lambda: path_stats(HOME / ".npm"),
+                 safety="safe", safety_note="rebuilt on next pip install",
+                 path_hint="~/Library/Caches/pip"),
+        Category("npm", "npm", "js", "Node npm cache",
+                 lambda: path_size(HOME / ".npm"),
                  clean_npm, tags={"safe", "dev"},
-                 safety="safe", safety_note="rebuilt on next npm install"),
+                 safety="safe", safety_note="rebuilt on next npm install",
+                 path_hint="~/.npm"),
         Category("brew", "brew", "br", "Homebrew downloads & old versions",
-                 lambda: path_stats(HOME / "Library/Caches/Homebrew"),
+                 lambda: path_size(HOME / "Library/Caches/Homebrew"),
                  clean_brew, tags={"safe", "dev"},
-                 safety="safe", safety_note="re-downloaded if needed"),
+                 safety="safe", safety_note="re-downloaded if needed",
+                 path_hint="~/Library/Caches/Homebrew"),
         Category("safe-caches", "safe-caches", "..",
                  "Misc app caches bundle (curated)",
                  scan_safe_caches, clean_safe_caches, tags={"safe"},
                  safety="safe",
-                 safety_note="hand-picked list of rebuildable caches"),
+                 safety_note="hand-picked list of rebuildable caches",
+                 path_hint=f"~/Library/Caches/* ({len(SAFE_CACHE_ITEMS)} items)"),
         Category("dotcache", "dotcache", "~.", "~/.cache contents",
                  scan_dotcache, clean_dotcache, tags={"safe"},
                  safety="safe",
-                 safety_note="XDG cache dir — rebuilds on demand"),
+                 safety_note="XDG cache dir — rebuilds on demand",
+                 path_hint="~/.cache"),
         Category("xcode", "xcode", "xc", "Xcode DerivedData",
                  scan_xcode, clean_xcode, tags={"dev"},
                  safety="caution",
-                 safety_note="next Xcode build will be slow"),
+                 safety_note="next Xcode build will be slow",
+                 path_hint="~/Library/Developer/Xcode/DerivedData"),
     ]
     for display, proc, rel in BROWSERS:
         scan_fn, clean_fn = make_browser_cleaner(display, proc, rel)
@@ -364,6 +371,7 @@ def build_categories() -> list[Category]:
             requires_apps_closed=[proc],
             safety="safe",
             safety_note="cookies, history, logins preserved",
+            path_hint=fmt_path(HOME / rel),
         ))
     for name, path in discover_other_caches():
         scan_fn, clean_fn = make_discovered_cleaner(path)
@@ -372,11 +380,12 @@ def build_categories() -> list[Category]:
             key=f"other-{name}",
             name=name,
             icon="??",
-            description=f"auto-discovered: ~/Library/Caches/{name}",
+            description=f"auto-discovered cache folder",
             scan=scan_fn,
             clean=clean_fn,
             tags={"other"},
             safety=safety_level,
             safety_note=safety_note,
+            path_hint=fmt_path(path),
         ))
     return cats

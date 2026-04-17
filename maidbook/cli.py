@@ -3,8 +3,8 @@ or when scripting output is preferred (``maidbook --cli --dry-run``)."""
 
 from __future__ import annotations
 
-from .common import APP_NAME, APP_TAGLINE, human, is_app_running, sum_stats
 from .cache import build_categories
+from .common import APP_NAME, APP_TAGLINE, human, is_app_running
 
 
 def run_cli(dry_run: bool, clean_all: bool) -> None:
@@ -12,17 +12,16 @@ def run_cli(dry_run: bool, clean_all: bool) -> None:
     print(f"{APP_NAME} -- {APP_TAGLINE}\n")
     print("Scanning...\n")
     rows = [(c, c.scan()) for c in cats]
-    rows.sort(key=lambda x: -x[1][0])
+    rows.sort(key=lambda x: -x[1])
 
-    print(f"  {'#':>3}  {'Size':>10}  {'Files':>7}  {'Dirs':>6}  Category")
-    print(f"  {'-'*3}  {'-'*10}  {'-'*7}  {'-'*6}  {'-'*50}")
-    for i, (c, (sz, fn, dn)) in enumerate(rows, 1):
+    print(f"  {'#':>3}  {'Size':>10}  {'Safety':<8}  Name  --  Directory  --  Notes")
+    print(f"  {'-'*3}  {'-'*10}  {'-'*8}  {'-'*70}")
+    for i, (c, sz) in enumerate(rows, 1):
         size_cell = human(sz) if sz else "--"
-        print(f"  {i:>3}  {size_cell:>10}  {fn:>7,}  {dn:>6,}  "
-              f"{c.name} -- {c.description}")
-    total_b, total_f, total_d = sum_stats(s for _, s in rows)
-    print(f"  Total: {human(total_b)}  "
-          f"({total_f:,} files, {total_d:,} folders)\n")
+        print(f"  {i:>3}  {size_cell:>10}  {c.safety:<8}  "
+              f"{c.name}  --  {c.path_hint}  --  {c.description}")
+    total_b = sum(sz for _, sz in rows)
+    print(f"\n  Total: {human(total_b)}\n")
 
     if dry_run and not clean_all:
         return

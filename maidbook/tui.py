@@ -18,7 +18,7 @@ from datetime import datetime
 from .common import (
     APP_NAME, APP_TAGLINE, BOX_BL, BOX_BR, BOX_H, BOX_TL, BOX_TR, BOX_V,
     BULLET, MARK_CURSOR, MARK_SELECTED, MARK_UNSELECTED, SPINNER,
-    human, is_app_running, short_count,
+    human, is_app_running,
 )
 from .cache import Category, build_categories
 from .health import Finding, HealthModule, HEALTH_MODULES
@@ -89,7 +89,6 @@ class TUI:
         self.stdscr = stdscr
         self.cats = cats
         self.sizes: dict[str, int] = {}
-        self.counts: dict[str, tuple[int, int]] = {}  # key -> (files, dirs)
         self.selected: set[str] = set()
         self.cursor = 0
         self.dry_run = False
@@ -149,17 +148,18 @@ class TUI:
             try:
                 return cat, cat.scan()
             except OSError:
-                return cat, (0, 0, 0)
+                return cat, 0
 
         done = 0
-        with ThreadPoolExecutor(max_workers=16) as pool:
+        # ``du`` subprocess is already fast; too many workers just trade
+        # I/O parallelism for process-spawn overhead. 8 is the sweet spot.
+        with ThreadPoolExecutor(max_workers=8) as pool:
             futures = {pool.submit(_one, c): c for c in self.cats}
             for fut in as_completed(futures):
-                cat, (sz, files_n, dirs_n) = fut.result()
+                cat, sz = fut.result()
                 done += 1
                 with self.scan_lock:
                     self.sizes[cat.key] = sz
-                    self.counts[cat.key] = (files_n, dirs_n)
                     self.scan_progress = done
                     self.scan_current = cat.name
         with self.scan_lock:
@@ -211,7 +211,6 @@ class TUI:
         self.mode = "scan"
         with self.scan_lock:
             self.sizes.clear()
-            self.counts.clear()
             self.scan_done = False
             self.scan_progress = 0
             self.scan_current = ""
@@ -387,8 +386,6 @@ class TUI:
             total = self.scan_total
             current = self.scan_current
             partial_bytes = sum(self.sizes.values())
-            partial_files = sum(f for f, _d in self.counts.values())
-            partial_dirs = sum(d for _f, d in self.counts.values())
 
         top = 5
         spin = SPINNER[self.spin_idx % len(SPINNER)]
@@ -406,8 +403,7 @@ class TUI:
                     f"{bar_str}  {progress:>3}/{total}",
                     curses.color_pair(self.C_ACCENT))
 
-        line_total = (f"  total so far    {human(partial_bytes):>12}   "
-                      f"{partial_files:,} files, {partial_dirs:,} folders")
+        line_total = f"  total so far    {human(partial_bytes):>12}"
         safe_addstr(self.stdscr, top + 4, 2, line_total,
                     curses.color_pair(self.C_ACCENT) | curses.A_BOLD)
 
@@ -578,7 +574,6 @@ class TUI:
         max_rows = min(15, h - start_row - 7)
         with self.scan_lock:
             sizes = dict(self.sizes)
-            counts = dict(self.counts)
             scanning = not self.scan_done
             scan_now = self.scan_current
             progress = self.scan_progress
@@ -595,10 +590,10 @@ class TUI:
         COL_CURSOR = 2
         COL_BULLET = 4
         COL_NAME = 6
-        COL_SIZE = 30
-        COL_ITEMS = 42
-        COL_SAFETY = 55
-        COL_DESC = 65
+        COL_SIZE = 30   # right-aligned, 11 wide
+        COL_DIR = 43    # directory path (with ~ prefix)
+        COL_SAFETY = 72 # 8 wide
+        COL_DESC = 82   # notes, trimmed to fit
 
         def safety_style(level: str):
             if level == "safe":
@@ -610,7 +605,7 @@ class TUI:
         header_attr = curses.color_pair(self.C_DIM) | curses.A_DIM
         safe_addstr(self.stdscr, header_row, COL_NAME, "name", header_attr)
         safe_addstr(self.stdscr, header_row, COL_SIZE, f"{'size':>11}", header_attr)
-        safe_addstr(self.stdscr, header_row, COL_ITEMS, f"{'files/dirs':>12}", header_attr)
+        safe_addstr(self.stdscr, header_row, COL_DIR, "directory", header_attr)
         safe_addstr(self.stdscr, header_row, COL_SAFETY, "safety", header_attr)
         safe_addstr(self.stdscr, header_row, COL_DESC, "notes", header_attr)
 
@@ -649,14 +644,11 @@ class TUI:
             safe_addstr(self.stdscr, y, COL_SIZE, f"{size_str:>11}",
                         curses.color_pair(size_color))
 
-            fn, dn = counts.get(c.key, (0, 0))
-            if sz is None:
-                items_str = "…"
-            elif fn == 0 and dn == 0:
-                items_str = "—"
-            else:
-                items_str = f"{short_count(fn)}/{short_count(dn)}"
-            safe_addstr(self.stdscr, y, COL_ITEMS, f"{items_str:>12}",
+            dir_budget = max(0, COL_SAFETY - COL_DIR - 1)
+            dir_text = c.path_hint or ""
+            if len(dir_text) > dir_budget:
+                dir_text = "…" + dir_text[-(dir_budget - 1):]
+            safe_addstr(self.stdscr, y, COL_DIR, dir_text.ljust(dir_budget),
                         curses.color_pair(self.C_DIM))
 
             label, color_pair, extra_attr = safety_style(c.safety)
@@ -728,15 +720,10 @@ class TUI:
                     ("caution", self.C_WARN, 0) if hovered.safety == "caution" else
                     ("review",  self.C_DIM,  curses.A_DIM)
                 )
-                fn, dn = counts.get(hovered.key, (0, 0))
-                count_bits = []
-                if fn:
-                    count_bits.append(f"{fn:,} files")
-                if dn:
-                    count_bits.append(f"{dn:,} folders")
-                count_str = ", ".join(count_bits) if count_bits else "empty"
                 note_text = hovered.safety_note or self.status
-                note = f"  {label}: {note_text}  ·  {count_str}"
+                note = f"  {label}: {note_text}"
+                if hovered.path_hint:
+                    note += f"  ·  {hovered.path_hint}"
                 safe_addstr(self.stdscr, h - 3, 0, note[: w - 1],
                             curses.color_pair(color_pair))
             else:

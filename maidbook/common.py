@@ -9,7 +9,6 @@ from __future__ import annotations
 import locale
 import os
 import shutil
-import stat as _stat
 import subprocess
 from pathlib import Path
 
@@ -51,71 +50,47 @@ def human(n: int) -> str:
     return f"{size:.1f} TB"
 
 
-def short_count(n: int) -> str:
-    """Compact count — 234, 1.2k, 3.4M."""
-    if n < 1000:
-        return str(n)
-    if n < 1_000_000:
-        return f"{n / 1000:.1f}k".replace(".0k", "k")
-    return f"{n / 1_000_000:.1f}M".replace(".0M", "M")
-
-
 # ---------------------------------------------------------------------------
-# Filesystem walks
+# Filesystem size
 # ---------------------------------------------------------------------------
 
 
 def path_size(p: Path) -> int:
-    return path_stats(p)[0]
+    """Disk usage of ``p`` in bytes, via macOS ``du -sk``.
 
+    ``du`` is a native BSD tool that walks the tree using ``getdirentries64``
+    in batches and returns block-rounded disk usage — faster than any pure
+    Python implementation on trees with millions of files. A missing path
+    returns ``0``.
 
-def path_stats(p: Path) -> tuple[int, int, int]:
-    """Return (total_bytes, file_count, dir_count) for a path.
-
-    Uses ``os.scandir`` — 3-5× faster than ``os.walk`` for deep cache trees
-    because ``DirEntry`` objects cache their lstat info, saving one syscall
-    per file. Counts every entry under ``p`` (excluding ``p`` itself).
+    Note: this reports *disk usage* (4 KB block granularity on APFS), not
+    logical file size. For a cache cleaner, disk usage is the correct number
+    — it's what gets freed on deletion.
     """
+    if not p.exists():
+        return 0
     try:
-        st = os.lstat(p)
-    except OSError:
-        return 0, 0, 0
-    if not _stat.S_ISDIR(st.st_mode):
-        return st.st_size, 1, 0
-
-    total, files_n, dirs_n = 0, 0, 0
-    stack = [str(p)]
-    while stack:
-        current = stack.pop()
-        try:
-            it = os.scandir(current)
-        except OSError:
-            continue
-        with it:
-            for entry in it:
-                try:
-                    if entry.is_dir(follow_symlinks=False):
-                        dirs_n += 1
-                        stack.append(entry.path)
-                    else:
-                        files_n += 1
-                        try:
-                            total += entry.stat(follow_symlinks=False).st_size
-                        except OSError:
-                            pass
-                except OSError:
-                    pass
-    return total, files_n, dirs_n
+        r = subprocess.run(
+            ["du", "-sk", str(p)],
+            capture_output=True, text=True, timeout=120,
+        )
+    except (subprocess.SubprocessError, FileNotFoundError, OSError):
+        return 0
+    if r.returncode != 0 or not r.stdout.strip():
+        return 0
+    try:
+        return int(r.stdout.split()[0]) * 1024
+    except (ValueError, IndexError):
+        return 0
 
 
-def sum_stats(items) -> tuple[int, int, int]:
-    """Aggregate a stream of (bytes, files, dirs) triples."""
-    b, f, d = 0, 0, 0
-    for x in items:
-        b += x[0]
-        f += x[1]
-        d += x[2]
-    return b, f, d
+def fmt_path(p: Path | str) -> str:
+    """Render a path with ``$HOME`` abbreviated to ``~``."""
+    s = str(p)
+    home = str(HOME)
+    if s.startswith(home):
+        return "~" + s[len(home):]
+    return s
 
 
 def rm_path(p: Path) -> tuple[int, int]:
