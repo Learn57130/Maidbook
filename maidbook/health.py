@@ -138,8 +138,14 @@ def scan_xprotect() -> list[Finding]:
     return out
 
 
-def scan_malware_heuristics() -> list[Finding]:
-    """Look for known-bad paths + LaunchAgents from unknown vendors."""
+def scan_malware_heuristics(
+    agent_dirs: list[Path] | None = None,
+) -> list[Finding]:
+    """Look for known-bad paths + LaunchAgents from unknown vendors.
+
+    ``agent_dirs`` defaults to the three standard macOS plist dirs.
+    Override it in tests to keep scans confined to a fixture dir.
+    """
     out: list[Finding] = []
 
     # 1) Known adware signatures
@@ -155,11 +161,12 @@ def scan_malware_heuristics() -> list[Finding]:
                 ))
 
     # 2) LaunchAgents / LaunchDaemons from unknown vendors
-    agent_dirs = [
-        HOME / "Library/LaunchAgents",
-        Path("/Library/LaunchAgents"),
-        Path("/Library/LaunchDaemons"),
-    ]
+    if agent_dirs is None:
+        agent_dirs = [
+            HOME / "Library/LaunchAgents",
+            Path("/Library/LaunchAgents"),
+            Path("/Library/LaunchDaemons"),
+        ]
     for d in agent_dirs:
         if not d.exists():
             continue

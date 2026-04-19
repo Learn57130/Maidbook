@@ -34,6 +34,7 @@ dependencies = []
 # `pip-audit` is auto-detected at runtime; install it to unlock the
 # Python-package CVE section of the health check.
 audit = ["pip-audit>=2.7"]
+test = ["pytest>=7.0"]
 
 [project.scripts]
 maidbook = "maidbook.__main__:main"
