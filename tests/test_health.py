@@ -67,7 +67,7 @@ def test_scan_malware_heuristics(monkeypatch, tmp_path):
     (la_dir / "com.apple.good.plist").touch()
     (la_dir / "com.google.chrome.plist").touch()
 
-    findings = health.scan_malware_heuristics()
+    findings = health.scan_malware_heuristics(agent_dirs=[la_dir])
 
     assert len(findings) == 2
 
