@@ -1,4 +1,8 @@
-# Maidbook
+<p align="center">
+  <img src="assets/banner.png" alt="Maidbook — the tidy Mac keeper" width="100%" />
+</p>
+
+# Maidbook <img src="assets/logo.png" align="right" width="120" />
 
 A tidy cache cleaner + health check for macOS. Single-binary TUI, stdlib-only, no install bloat.
 
