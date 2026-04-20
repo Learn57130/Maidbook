@@ -36,17 +36,48 @@ The **Health Check** is **not antivirus**. It wraps built-in macOS tools to surf
 
 ## Install
 
-### From source (recommended for now)
+### With pipx (recommended)
+
+[`pipx`](https://pipx.pypa.io/) installs each Python tool in its own isolated
+venv and puts a symlink in `~/.local/bin/`. No conflicts with system Python
+or other packages, and uninstalling is one command.
 
 ```bash
-git clone https://github.com/Learn57130/maidbook.git
-cd maidbook
+# one-time: install pipx if you don't have it
+brew install pipx
+pipx ensurepath          # adds ~/.local/bin to PATH, restart terminal
+
+# then install Maidbook
+git clone https://github.com/Learn57130/Maidbook.git
+cd Maidbook
+pipx install .
+```
+
+Now `maidbook` works from any directory.
+
+To update later:
+
+```bash
+cd Maidbook && git pull && pipx install --force .
+```
+
+To uninstall:
+
+```bash
+pipx uninstall maidbook
+```
+
+### With pip (alternative)
+
+```bash
+git clone https://github.com/Learn57130/Maidbook.git
+cd Maidbook
 pip install --user .
 ```
 
-The `maidbook` command will be installed to your Python user scripts dir
-(usually `~/.local/bin/` or `~/Library/Python/3.x/bin/` on macOS).
-If that's not on your `PATH`, either add it or use `pip install -e .` for a dev install.
+The binary lands in your Python user scripts dir — often
+`~/Library/Python/3.x/bin/maidbook` on macOS. If that's not on your `PATH`,
+either add it or use `pip install -e .` for an editable dev install.
 
 ### From PyPI
 
