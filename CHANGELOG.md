@@ -4,7 +4,22 @@ All notable changes to Maidbook. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/), versioning per
 [SemVer](https://semver.org/).
 
-## [Unreleased]
+## [Unreleased] — v0.2 planned
+
+### Planned
+
+- Intelligent cache discovery — signature-based scan for `node_modules`,
+  `target/`, `docker`, `__pycache__` across the user's projects dir.
+- Risk grading — finer tiering (low / medium / high) to distinguish safe
+  log deletion from time-costly build re-compilation.
+- Headless cron mode via `--cron` flag with user-defined TTL rules.
+- Smart whitelisting — toggle-based "pinning" in the TUI to protect
+  specific active projects from automated cleanup.
+- Quantitative analytics — persistent JSON / SQLite tracking of cumulative
+  space saved and "bloat velocity" (GB growth over time).
+- Post-action reporting — cron summary logs for full transparency.
+- ASCII mascot integration — reactive minimalist mascot in the TUI that
+  changes state based on system cleanliness.
 
 ## [0.1.0] — 2026-04-16
 

@@ -159,6 +159,30 @@ maidbook --version
 
 Linux is not a target — several checks (XProtect, `codesign`, `xattr`, `pbcopy`) are macOS-specific.
 
+## Roadmap — v0.2 planned
+
+A lean list of what's next. Order is priority-ish, not strict.
+
+- **Intelligent cache discovery** — signature-based scanning for dev-heavy
+  artifacts (`node_modules`, `target/`, `docker`, `__pycache__`) with
+  automated path detection across your projects dir.
+- **Risk grading** — finer tiering of deletable items by "risk level"
+  (low / medium / high) to distinguish safe log cleanup from time-costly
+  build re-compilation.
+- **Headless cron mode** — a `--cron` flag for automated background purges
+  based on user-defined TTL (time-to-live) rules.
+- **Smart whitelisting** — toggle-based "pinning" in the TUI to protect
+  specific active projects from automated cleanup.
+- **Quantitative analytics** — persistent tracking (JSON / SQLite) of
+  cumulative space saved and "bloat velocity" (GB growth over time).
+- **Post-action reporting** — summary logs after each cron execution for
+  full transparency on what was reclaimed.
+- **ASCII mascot integration** — a reactive minimalist mascot inside the
+  TUI that changes state based on how tidy the system is.
+
+Open an issue if you want to discuss scope on any of these, or want to grab
+one to contribute.
+
 ## Contributing
 
 PRs welcome. Issues especially welcome — tell us when a cache shouldn't have been cleaned, or when a health finding was wrong. See `CLAUDE.md` for project-layout notes.
