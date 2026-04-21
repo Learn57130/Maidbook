@@ -67,6 +67,13 @@ To uninstall:
 pipx uninstall maidbook
 ```
 
+> **Heads-up:** if you run `pipx uninstall maidbook` while you're `cd`'d into
+> the cloned `Maidbook/` folder (or any parent of it), pipx errors out with
+> `'maidbook' looks like a path`. macOS's filesystem is case-insensitive, so
+> `maidbook` resolves to the `Maidbook/` directory and pipx refuses to treat
+> it as a package name. Run the command from a neutral directory — e.g.
+> `(cd /tmp && pipx uninstall maidbook)` — or just `cd ~` first.
+
 ### With pip (alternative)
 
 ```bash
