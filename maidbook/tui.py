@@ -18,7 +18,7 @@ from datetime import datetime
 from .common import (
     APP_NAME, APP_TAGLINE, BOX_BL, BOX_BR, BOX_H, BOX_TL, BOX_TR, BOX_V,
     BULLET, MARK_CURSOR, MARK_SELECTED, MARK_UNSELECTED, SPINNER,
-    human, is_app_running,
+    fmt_path, human, is_app_running,
 )
 from .cache import Category, build_categories
 from .health import Finding, HealthModule, HEALTH_MODULES
@@ -286,7 +286,8 @@ class TUI:
             if f.remediation:
                 lines.append(f"      → {f.remediation}")
             if f.path:
-                lines.append(f"      {f.path}")
+                # Redact $HOME → ~ so pasted reports don't leak the username.
+                lines.append(f"      {fmt_path(f.path)}")
         return "\n".join(lines) + "\n"
 
     def copy_findings(self) -> bool:
@@ -504,7 +505,9 @@ class TUI:
             if f.remediation:
                 lines.append(("remediation", f.remediation))
             if f.path:
-                lines.append(("path", f.path))
+                # Redact $HOME → ~ in the on-screen display too, so it stays
+                # consistent with the clipboard export.
+                lines.append(("path", fmt_path(f.path)))
 
         if self.health_cursor >= len(lines):
             self.health_cursor = max(0, len(lines) - 1)
@@ -831,7 +834,6 @@ class TUI:
     def start_rescan(self):
         with self.scan_lock:
             self.sizes.clear()
-            self.counts.clear()
             self.scan_done = False
             self.scan_progress = 0
         self.selected.clear()

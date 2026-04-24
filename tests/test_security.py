@@ -21,11 +21,121 @@ def test_path_size_subprocess_injection(mock_run):
     with patch.object(Path, 'exists', return_value=True):
         path_size(path)
 
-    # Check that subprocess was called correctly (list format, no shell=True)
+    # Check that subprocess was called correctly: list format, no shell=True,
+    # and a ``--`` separator so the path can never be mis-parsed as a flag.
     mock_run.assert_called_with(
-        ["du", "-sk", ";/bin/sh"],
+        ["du", "-sk", "--", ";/bin/sh"],
         capture_output=True, text=True, timeout=120
     )
+
+
+@patch("subprocess.run")
+def test_path_size_dashed_filename_not_parsed_as_flag(mock_run):
+    """Regression test for audit finding M3.
+
+    A cache folder literally named like a flag (``-rf``, ``--si``) must NOT
+    be consumed by ``du`` as an option. The ``--`` end-of-options sentinel
+    guarantees this.
+    """
+    from maidbook.common import path_size
+    for hostile in ("-rf", "--si", "-H"):
+        mock_run.reset_mock()
+        mock_run.return_value = type("R", (), {
+            "returncode": 0, "stdout": "42\t/x\n", "stderr": "",
+        })()
+        with patch.object(Path, "exists", return_value=True):
+            path_size(Path(hostile))
+        args, _ = mock_run.call_args
+        assert args[0] == ["du", "-sk", "--", hostile], (
+            f"du must be called with -- separator before {hostile!r}"
+        )
+
+
+def test_rm_path_on_symlink_removes_link_not_target(tmp_path):
+    """Core safety invariant: deleting a symlinked cache entry must NOT
+    delete the link's target. A malicious or misconfigured symlink inside
+    ``~/Library/Caches`` pointing to something important (e.g. ``/Users``,
+    ``~/Documents``) must be handled as a link-only unlink.
+    """
+    from maidbook.common import rm_path
+
+    target = tmp_path / "important_data"
+    target.mkdir()
+    (target / "file.txt").write_text("precious")
+
+    link = tmp_path / "cache_link"
+    link.symlink_to(target)
+
+    rm_path(link)
+
+    assert not link.is_symlink() and not link.exists(), \
+        "the symlink itself should have been removed"
+    assert target.exists(), "target directory was deleted via the symlink"
+    assert (target / "file.txt").exists(), \
+        "target contents were deleted via the symlink"
+
+
+def test_browser_cleaner_preserves_symlinked_cache_target(tmp_path, monkeypatch):
+    """Core safety invariant: even if an attacker plants a symlink inside
+    a browser profile at the literal name ``Cache`` and points it at a
+    sensitive directory, the cleaner must not follow the link.
+    """
+    from maidbook import cache
+
+    monkeypatch.setattr(cache, "HOME", tmp_path)
+
+    profile = tmp_path / "Library/Caches/BraveSoftware/Brave-Browser/Default"
+    profile.mkdir(parents=True)
+
+    docs = tmp_path / "Documents"
+    docs.mkdir()
+    (docs / "diary.txt").write_text("private")
+    (profile / "Cache").symlink_to(docs)
+
+    _scan, clean = cache.make_browser_cleaner(
+        "Brave", "Brave Browser", "Library/Caches/BraveSoftware/Brave-Browser",
+    )
+    monkeypatch.setattr(cache, "is_app_running", lambda _name: False)
+    clean(False)
+
+    assert docs.exists(), "symlink target (Documents) was removed"
+    assert (docs / "diary.txt").exists(), \
+        "symlink target contents were removed"
+
+
+def test_browser_cleaner_preserves_profile_data_files(tmp_path, monkeypatch):
+    """Core safety invariant: the browser cleaner matches only the literal
+    directory names ``Cache``, ``Code Cache``, ``GPUCache``. Profile data
+    files (``Cookies``, ``History``, ``Login Data``, ``Bookmarks``) must
+    never be touched.
+    """
+    from maidbook import cache
+
+    monkeypatch.setattr(cache, "HOME", tmp_path)
+
+    profile = tmp_path / "Library/Caches/BraveSoftware/Brave-Browser/Default"
+    profile.mkdir(parents=True)
+    (profile / "Cache").mkdir()
+    (profile / "Code Cache").mkdir()
+    (profile / "GPUCache").mkdir()
+    (profile / "Cookies").write_bytes(b"session=xyz")
+    (profile / "History").write_bytes(b"history db")
+    (profile / "Login Data").write_bytes(b"login db")
+    (profile / "Bookmarks").write_text("{}")
+
+    _scan, clean = cache.make_browser_cleaner(
+        "Brave", "Brave Browser", "Library/Caches/BraveSoftware/Brave-Browser",
+    )
+    monkeypatch.setattr(cache, "is_app_running", lambda _name: False)
+    clean(False)
+
+    assert not (profile / "Cache").exists()
+    assert not (profile / "Code Cache").exists()
+    assert not (profile / "GPUCache").exists()
+    assert (profile / "Cookies").exists(), "Cookies file was removed"
+    assert (profile / "History").exists(), "History file was removed"
+    assert (profile / "Login Data").exists(), "Login Data was removed"
+    assert (profile / "Bookmarks").exists(), "Bookmarks was removed"
 
 @patch("subprocess.run")
 def test_is_app_running_injection(mock_run):

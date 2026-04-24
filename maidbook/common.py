@@ -70,8 +70,11 @@ def path_size(p: Path) -> int:
     if not p.exists():
         return 0
     try:
+        # ``--`` is a POSIX end-of-options sentinel: everything after it is
+        # treated as a positional arg, so a cache folder named like ``-H`` or
+        # ``--si`` can't be mis-parsed by ``du`` as a flag.
         r = subprocess.run(
-            ["du", "-sk", str(p)],
+            ["du", "-sk", "--", str(p)],
             capture_output=True, text=True, timeout=120,
         )
     except (subprocess.SubprocessError, FileNotFoundError, OSError):
