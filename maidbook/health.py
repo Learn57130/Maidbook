@@ -329,10 +329,17 @@ def _run_quiet(cmd: list[str], timeout: int = 60) -> tuple[int, str, str]:
 
 
 def scan_vulnerabilities() -> list[Finding]:
-    """Wrap pip-audit / brew outdated / npm outdated -g where available."""
+    """Wrap pip-audit / brew outdated / npm outdated -g where available.
+
+    Honest labelling: only ``pip-audit`` produces real CVE matches and earns
+    a ``caution`` severity. ``brew outdated`` and ``npm outdated -g`` only
+    show update drift — packages that are behind their latest release with
+    no known vulnerability — so they emit ``info`` findings with neutral
+    "update available" wording instead of security-tinged "outdated".
+    """
     out: list[Finding] = []
 
-    # pip-audit (optional)
+    # pip-audit (optional) — real CVE scan, this one IS a security finding.
     rc, stdout, _stderr = _run_quiet(["pip-audit", "--format=json"], timeout=90)
     if rc == 127:
         out.append(Finding(
@@ -359,7 +366,8 @@ def scan_vulnerabilities() -> list[Finding]:
             else:
                 out.append(Finding("vulns", "ok", "pip-audit: clean", ""))
 
-    # brew outdated
+    # brew outdated — package version drift, not vulnerability data. ``info``
+    # severity, neutral "update available" wording.
     rc, stdout, _ = _run_quiet(["brew", "outdated", "--quiet"], timeout=30)
     if rc == 127:
         pass  # no brew on this system
@@ -370,15 +378,15 @@ def scan_vulnerabilities() -> list[Finding]:
                 f", … (+{len(outdated) - 5})" if len(outdated) > 5 else ""
             )
             out.append(Finding(
-                "vulns", "caution",
-                f"brew: {len(outdated)} outdated packages",
-                preview,
+                "vulns", "info",
+                f"brew: {len(outdated)} package updates available",
+                f"{preview} — version drift only, not CVE data",
                 remediation="brew upgrade",
             ))
         else:
             out.append(Finding("vulns", "ok", "brew: all up to date", ""))
 
-    # npm global outdated (exit 1 is "found outdated", not an error)
+    # npm outdated -g — same caveat as brew. ``info``, not ``caution``.
     rc, stdout, _ = _run_quiet(["npm", "outdated", "-g", "--json"], timeout=30)
     if rc != 127:
         try:
@@ -391,9 +399,9 @@ def scan_vulnerabilities() -> list[Finding]:
                 f", … (+{len(pkgs) - 5})" if len(pkgs) > 5 else ""
             )
             out.append(Finding(
-                "vulns", "caution",
-                f"npm (global): {len(pkgs)} outdated",
-                preview,
+                "vulns", "info",
+                f"npm (global): {len(pkgs)} package updates available",
+                f"{preview} — version drift only, not CVE data",
                 remediation="npm update -g",
             ))
         elif data == {}:

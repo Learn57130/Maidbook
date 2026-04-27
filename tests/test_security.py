@@ -159,3 +159,79 @@ def test_health_run_quiet_injection(mock_run):
         ["pip-audit", "--format=json", ";", "ls"],
         capture_output=True, text=True, timeout=60
     )
+
+
+def test_rm_path_reports_partial_deletion_honestly(tmp_path):
+    """Regression test for codex P1.
+
+    If part of a tree cannot be removed, ``rm_path`` must NOT claim the
+    full pre-deletion size as bytes_freed. It must report only what
+    actually went away, and surface the failure count via ``errors``.
+    """
+    import os
+    from maidbook.common import rm_path
+
+    root = tmp_path / "cache_root"
+    root.mkdir()
+    deletable = root / "regular.bin"
+    deletable.write_bytes(b"x" * 4096)
+
+    # A read-only subdir whose unlink will fail — simulates the kind of
+    # protected file (system-owned cache, locked DB, etc.) the cleaner
+    # is expected to walk past honestly rather than over-report.
+    locked_dir = root / "locked"
+    locked_dir.mkdir()
+    locked_file = locked_dir / "stuck.bin"
+    locked_file.write_bytes(b"y" * 4096)
+    # Strip write perm on the parent so the file inside cannot be unlinked.
+    os.chmod(locked_dir, 0o500)
+    try:
+        freed, errors = rm_path(root)
+
+        # Honest reporting: errors > 0, and freed cannot exceed what
+        # actually went away.
+        assert errors > 0, "rmtree onerror callback must propagate"
+        assert locked_file.exists(), "fixture sanity: locked file should still be present"
+        # The locked file's bytes must NOT be counted as freed.
+        assert freed < 4096 * 2, (
+            f"freed={freed} but the locked file's bytes are still on disk"
+        )
+    finally:
+        # Restore perms so pytest can clean up tmp_path.
+        os.chmod(locked_dir, 0o700)
+
+
+def test_cli_run_isolates_per_category_scan_failures(tmp_path, monkeypatch, capsys):
+    """Regression test for codex P3.
+
+    A single scan() raising must NOT take down the rest of the CLI run.
+    The row should appear with a ``?`` size and an error note, and other
+    categories should continue to print normally.
+    """
+    from maidbook import cli
+    from maidbook.cache import Category
+
+    def good_scan() -> int:
+        return 2048
+
+    def bad_scan() -> int:
+        raise RuntimeError("simulated scan failure")
+
+    def noop_clean(_dry):
+        return 0, 0, "noop"
+
+    cats = [
+        Category("ok", "good-cat", "OK", "good description",
+                 good_scan, noop_clean, safety="safe", path_hint="~/ok"),
+        Category("bad", "bad-cat", "!!", "bad description",
+                 bad_scan, noop_clean, safety="review", path_hint="~/bad"),
+    ]
+    monkeypatch.setattr(cli, "build_categories", lambda: cats)
+
+    cli.run_cli(dry_run=True, clean_all=False)
+
+    out = capsys.readouterr().out
+    assert "good-cat" in out, "the good category must still print"
+    assert "bad-cat" in out, "the failing category must still appear as a row"
+    assert "?" in out, "failing row should render `?` for size"
+    assert "scan error" in out, "failing row should annotate the error inline"

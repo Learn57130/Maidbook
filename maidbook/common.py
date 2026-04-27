@@ -97,19 +97,46 @@ def fmt_path(p: Path | str) -> str:
 
 
 def rm_path(p: Path) -> tuple[int, int]:
-    """Delete a file or directory recursively. Returns (bytes_freed, errors)."""
-    size = path_size(p)
-    errors = 0
-    if not p.exists():
+    """Delete a file or directory. Returns ``(bytes_freed, errors)``.
+
+    The numbers are honest: ``bytes_freed`` reflects what was *actually*
+    removed (size_before - size_after), not what the deletion was asked to
+    free. ``errors`` counts every per-entry failure inside ``shutil.rmtree``
+    plus any top-level ``OSError``. This matters when a tree contains
+    protected, read-only, or busy files — the user must not be told space
+    was reclaimed when some of it is still on disk.
+    """
+    if not p.exists() and not p.is_symlink():
         return 0, 0
-    try:
-        if p.is_file() or p.is_symlink():
+
+    # File or symlink path — straight unlink, single failure point.
+    if p.is_file() or p.is_symlink():
+        try:
+            size_before = p.lstat().st_size
+        except OSError:
+            size_before = 0
+        try:
             p.unlink()
-        else:
-            shutil.rmtree(p, onerror=lambda *_: None)
+            return size_before, 0
+        except OSError:
+            return 0, 1
+
+    # Directory tree — measure before, count per-entry failures, measure after.
+    size_before = path_size(p)
+    errors = 0
+
+    def _onerror(_func, _path, _excinfo):
+        nonlocal errors
+        errors += 1
+
+    try:
+        shutil.rmtree(p, onerror=_onerror)
     except OSError:
         errors += 1
-    return size, errors
+
+    size_after = path_size(p) if p.exists() else 0
+    freed = max(0, size_before - size_after)
+    return freed, errors
 
 
 # ---------------------------------------------------------------------------
