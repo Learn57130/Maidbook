@@ -293,7 +293,7 @@ def scan_quarantine() -> list[Finding]:
         except OSError:
             continue
         for p in entries:
-            if not p.is_dir():
+            if not p.is_dir() or p.suffix == ".app":
                 candidates.append(p)
 
     found: list[Path] = []
@@ -363,7 +363,7 @@ def scan_vulnerabilities() -> list[Finding]:
             "no Python CVE scan performed",
             remediation="pip install pip-audit",
         ))
-    elif rc == 0:
+    elif rc in (0, 1):
         try:
             data = _json.loads(stdout or "[]")
         except _json.JSONDecodeError:
@@ -381,6 +381,12 @@ def scan_vulnerabilities() -> list[Finding]:
                 ))
             else:
                 out.append(Finding("vulns", "ok", "pip-audit: clean", ""))
+    else:
+        out.append(Finding(
+            "vulns", "info", "pip-audit scan failed",
+            "Python CVE scan was inconclusive",
+            remediation="Re-run `pip-audit --format=json` for details",
+        ))
 
     # brew outdated — package version drift, not vulnerability data. ``info``
     # severity, neutral "update available" wording.

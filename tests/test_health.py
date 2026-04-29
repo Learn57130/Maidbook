@@ -97,12 +97,31 @@ def test_scan_quarantine(mock_xattr, tmp_path, monkeypatch):
     assert "file1.txt" in findings[0].title
     assert findings[0].severity == "info"
 
+
+@patch("maidbook.health._has_quarantine_xattr")
+def test_scan_quarantine_includes_app_bundles(mock_xattr, tmp_path, monkeypatch):
+    monkeypatch.setattr(health, "HOME", tmp_path)
+
+    desktop = tmp_path / "Desktop"
+    desktop.mkdir()
+    app = desktop / "Downloaded.app"
+    app.mkdir()
+
+    mock_xattr.side_effect = lambda p: p == app
+
+    findings = health.scan_quarantine()
+
+    assert len(findings) == 1
+    assert "Downloaded.app" in findings[0].title
+    assert findings[0].severity == "info"
+
+
 @patch("maidbook.health._run_quiet")
 def test_scan_vulnerabilities(mock_run):
     def run_side_effect(cmd, timeout=60):
         if "pip-audit" in cmd[0]:
             # Vulnerable python package
-            return 0, '{"vulnerabilities": [{"name": "requests"}]}', ""
+            return 1, '{"vulnerabilities": [{"name": "requests"}]}', ""
         if "brew" in cmd[0]:
             # Clean brew
             return 0, "", ""
