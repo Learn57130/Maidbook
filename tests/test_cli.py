@@ -22,3 +22,29 @@ def test_run_cli(mock_print, mock_build):
     # Clean all
     cli.run_cli(dry_run=False, clean_all=True)
     assert any("cleaned" in str(c) for c in mock_print.mock_calls)
+
+
+def test_tui_scan_worker_isolates_runtime_errors():
+    from maidbook.cache import Category
+    from maidbook.tui import TUI
+
+    good = Category(
+        "good", "Good", "G", "good",
+        lambda: 2048,
+        lambda dry: (0, 0, "noop"),
+    )
+    bad = Category(
+        "bad", "Bad", "B", "bad",
+        lambda: (_ for _ in ()).throw(RuntimeError("boom")),
+        lambda dry: (0, 0, "noop"),
+    )
+
+    tui = TUI(None, [good, bad])
+    tui.mode = "scan"
+
+    tui.scan_worker()
+
+    assert tui.scan_done is True
+    assert tui.mode == "select"
+    assert tui.sizes["good"] == 2048
+    assert tui.sizes["bad"] == 0

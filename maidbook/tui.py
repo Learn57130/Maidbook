@@ -147,7 +147,8 @@ class TUI:
         def _one(cat: Category):
             try:
                 return cat, cat.scan()
-            except OSError:
+            except (OSError, subprocess.SubprocessError, RuntimeError,
+                    ValueError):
                 return cat, 0
 
         done = 0
