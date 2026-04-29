@@ -25,6 +25,52 @@ All notable changes to Maidbook. Format loosely follows
 - Within-category progress (current path / file count) during cleanup.
 - Vim-style end-of-list (`G` / `gg`) and selection wrap-around.
 
+## [0.1.2] — 2026-04-30
+
+A small honesty patch shipped from a Codex PR review. Three real bugs caught
+post-v0.1.1 by Codex, all in `health.py` / `tui.py` territory.
+
+### Fixed
+
+- **`scan_vulnerabilities` now treats `pip-audit` rc=1 as a successful scan
+  with vulnerabilities found.** `pip-audit` documents an exit code of `1`
+  when CVEs are present in the dependency set; the previous code only
+  entered the JSON-parse branch on rc=0, so vulnerable Python packages
+  were never surfaced and the Health Check would silently report "clean".
+  This is an honesty-class bug — same family as the `rm_path` partial-
+  deletion fix in v0.1.1. True scan failures now emit an `info` finding
+  ("pip-audit scan failed") rather than passing through as silently clean.
+- **`scan_quarantine` now flags quarantined `.app` bundles.** `.app`
+  bundles are directories on APFS, so the prior `if not p.is_dir()`
+  filter was excluding them entirely. A quarantined app downloaded into
+  `~/Downloads` or `~/Desktop` would never be reported. Fixed by allowing
+  `.app`-suffixed directories through the candidate gate.
+- **TUI scan worker now isolates a wider class of per-category failures.**
+  Previously caught only `OSError`; a `RuntimeError` / `ValueError` /
+  `subprocess.SubprocessError` raised by one cache scanner would kill the
+  whole worker thread and leave the scan stuck. Broadened the exception
+  set so a single broken category cannot take down the whole scan.
+
+### Tests
+
+Two new regression tests, plus a fix to a pre-existing test that was
+asserting the wrong `pip-audit` return code:
+- `test_tui_scan_worker_isolates_runtime_errors`
+- `test_scan_quarantine_includes_app_bundles`
+- `test_scan_vulnerabilities` — corrected the vulnerable-case fixture from
+  `rc=0` to `rc=1` to match `pip-audit`'s actual contract
+
+37/37 pytest passing.
+
+### Workflow note
+
+This patch is the first one shipped via a real PR-review loop rather than
+direct push to `main`. Codex opened the PR (`codex/fix-review-findings`),
+the fixes were verified locally on the branch (`pytest -v` clean), then
+merged via the GitHub UI. A duplicate Jules-driven PR forked off a stale
+commit was closed without merging — the canonical "stale-branch duplicate-PR"
+anti-pattern.
+
 ## [0.1.1] — 2026-04-29
 
 A "post-journey" patch addressing 7 issues surfaced during a full live
