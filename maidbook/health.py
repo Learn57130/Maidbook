@@ -138,8 +138,14 @@ def scan_xprotect() -> list[Finding]:
     return out
 
 
-def scan_malware_heuristics() -> list[Finding]:
-    """Look for known-bad paths + LaunchAgents from unknown vendors."""
+def scan_malware_heuristics(
+    agent_dirs: list[Path] | None = None,
+) -> list[Finding]:
+    """Look for known-bad paths + LaunchAgents from unknown vendors.
+
+    ``agent_dirs`` defaults to the three standard macOS plist dirs.
+    Override it in tests to keep scans confined to a fixture dir.
+    """
     out: list[Finding] = []
 
     # 1) Known adware signatures
@@ -155,11 +161,12 @@ def scan_malware_heuristics() -> list[Finding]:
                 ))
 
     # 2) LaunchAgents / LaunchDaemons from unknown vendors
-    agent_dirs = [
-        HOME / "Library/LaunchAgents",
-        Path("/Library/LaunchAgents"),
-        Path("/Library/LaunchDaemons"),
-    ]
+    if agent_dirs is None:
+        agent_dirs = [
+            HOME / "Library/LaunchAgents",
+            Path("/Library/LaunchAgents"),
+            Path("/Library/LaunchDaemons"),
+        ]
     for d in agent_dirs:
         if not d.exists():
             continue
@@ -212,6 +219,12 @@ def scan_codesign() -> list[Finding]:
         return out
 
     def _verify(app: Path):
+        """Return ``(name, message, severity)`` or None if signature is fine.
+
+        Severity is ``caution`` for a real signature failure (rc != 0 with
+        stderr) and ``info`` for a timeout or other subprocess error — those
+        latter cases mean "scan was inconclusive", not "this app is broken".
+        """
         try:
             r = subprocess.run(
                 ["codesign", "--verify", "--strict", str(app)],
@@ -220,28 +233,38 @@ def scan_codesign() -> list[Finding]:
             if r.returncode != 0:
                 err = r.stderr.decode("utf-8", "replace").strip().splitlines()
                 first = err[0] if err else "verification failed"
-                return app.name, first[:100]
-        except (subprocess.SubprocessError, OSError):
-            return app.name, "codesign check timed out"
+                return app.name, first[:100], "caution"
+        except subprocess.TimeoutExpired:
+            return app.name, (
+                "codesign --verify exceeded 20s — scan inconclusive, "
+                "no signature problem confirmed"
+            ), "info"
+        except (subprocess.SubprocessError, OSError) as e:
+            return app.name, f"codesign error: {e}", "info"
         return None
 
-    bad: list[tuple[str, str]] = []
+    bad: list[tuple[str, str, str]] = []
     with ThreadPoolExecutor(max_workers=8) as pool:
         for result in pool.map(_verify, apps):
             if result:
                 bad.append(result)
 
-    for name, err in bad:
-        out.append(Finding(
-            "codesign", "caution",
-            f"Signature issue: {name}",
-            err,
-            remediation="If unexpected, reinstall from the official source",
-        ))
-    if not bad:
+    for name, err, sev in bad:
+        if sev == "caution":
+            title = f"Signature issue: {name}"
+            remediation = "If unexpected, reinstall from the official source"
+        else:  # "info" — timeout / scanner error
+            title = f"Signature scan inconclusive: {name}"
+            remediation = "Re-run when the system is less busy"
+        out.append(Finding("codesign", sev, title, err, remediation=remediation))
+
+    cautions = [b for b in bad if b[2] == "caution"]
+    if not cautions:
         out.append(Finding(
             "codesign", "ok",
-            f"All {len(apps)} applications signed correctly", "",
+            f"All {len(apps) - len(bad)} applications signed correctly"
+            if bad else f"All {len(apps)} applications signed correctly",
+            "",
         ))
     return out
 
@@ -322,10 +345,17 @@ def _run_quiet(cmd: list[str], timeout: int = 60) -> tuple[int, str, str]:
 
 
 def scan_vulnerabilities() -> list[Finding]:
-    """Wrap pip-audit / brew outdated / npm outdated -g where available."""
+    """Wrap pip-audit / brew outdated / npm outdated -g where available.
+
+    Honest labelling: only ``pip-audit`` produces real CVE matches and earns
+    a ``caution`` severity. ``brew outdated`` and ``npm outdated -g`` only
+    show update drift — packages that are behind their latest release with
+    no known vulnerability — so they emit ``info`` findings with neutral
+    "update available" wording instead of security-tinged "outdated".
+    """
     out: list[Finding] = []
 
-    # pip-audit (optional)
+    # pip-audit (optional) — real CVE scan, this one IS a security finding.
     rc, stdout, _stderr = _run_quiet(["pip-audit", "--format=json"], timeout=90)
     if rc == 127:
         out.append(Finding(
@@ -352,7 +382,8 @@ def scan_vulnerabilities() -> list[Finding]:
             else:
                 out.append(Finding("vulns", "ok", "pip-audit: clean", ""))
 
-    # brew outdated
+    # brew outdated — package version drift, not vulnerability data. ``info``
+    # severity, neutral "update available" wording.
     rc, stdout, _ = _run_quiet(["brew", "outdated", "--quiet"], timeout=30)
     if rc == 127:
         pass  # no brew on this system
@@ -363,15 +394,15 @@ def scan_vulnerabilities() -> list[Finding]:
                 f", … (+{len(outdated) - 5})" if len(outdated) > 5 else ""
             )
             out.append(Finding(
-                "vulns", "caution",
-                f"brew: {len(outdated)} outdated packages",
-                preview,
+                "vulns", "info",
+                f"brew: {len(outdated)} package updates available",
+                f"{preview} — version drift only, not CVE data",
                 remediation="brew upgrade",
             ))
         else:
             out.append(Finding("vulns", "ok", "brew: all up to date", ""))
 
-    # npm global outdated (exit 1 is "found outdated", not an error)
+    # npm outdated -g — same caveat as brew. ``info``, not ``caution``.
     rc, stdout, _ = _run_quiet(["npm", "outdated", "-g", "--json"], timeout=30)
     if rc != 127:
         try:
@@ -384,9 +415,9 @@ def scan_vulnerabilities() -> list[Finding]:
                 f", … (+{len(pkgs) - 5})" if len(pkgs) > 5 else ""
             )
             out.append(Finding(
-                "vulns", "caution",
-                f"npm (global): {len(pkgs)} outdated",
-                preview,
+                "vulns", "info",
+                f"npm (global): {len(pkgs)} package updates available",
+                f"{preview} — version drift only, not CVE data",
                 remediation="npm update -g",
             ))
         elif data == {}:

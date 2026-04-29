@@ -4,7 +4,77 @@ All notable changes to Maidbook. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/), versioning per
 [SemVer](https://semver.org/).
 
-## [Unreleased]
+## [Unreleased] — v0.2 planned
+
+### Planned
+
+- Intelligent cache discovery — signature-based scan for `node_modules`,
+  `target/`, `docker`, `__pycache__` across the user's projects dir.
+- Risk grading — finer tiering (low / medium / high) to distinguish safe
+  log deletion from time-costly build re-compilation.
+- Headless cron mode via `--cron` flag with user-defined TTL rules.
+- Smart whitelisting — toggle-based "pinning" in the TUI to protect
+  specific active projects from automated cleanup.
+- Quantitative analytics — persistent JSON / SQLite tracking of cumulative
+  space saved and "bloat velocity" (GB growth over time).
+- Post-action reporting — cron summary logs for full transparency.
+- ASCII mascot integration — reactive minimalist mascot in the TUI that
+  changes state based on system cleanliness.
+- Async deletion (mv-then-rmtree) for ~50–100× perceived cleanup speed.
+- Graceful Ctrl+C during clean (threading.Event stop signal).
+- Within-category progress (current path / file count) during cleanup.
+- Vim-style end-of-list (`G` / `gg`) and selection wrap-around.
+
+## [0.1.1] — 2026-04-29
+
+A "post-journey" patch addressing 7 issues surfaced during a full live
+user-journey test of v0.1.0.
+
+### Fixed
+
+- **N1 — Full path redaction in clipboard + display.** Codex's M1 fix had
+  only piped `f.path` through `fmt_path`; the codesign-finding `f.detail`
+  string still emitted `/Users/<name>/Applications/Foo.app: invalid Info.plist`.
+  Username leaks via `f.detail` and `f.remediation` are now redacted via a
+  new `common.redact_home` helper applied at every emission site.
+- **N4 — `s` filter now matches the visible safety column.** Pressing `s`
+  used to select only the 5 hand-tagged "safe" categories. It now selects
+  every row where `c.safety == "safe"`, including browser caches and
+  Apple-prefixed auto-discovered rows that classify as safe — matching
+  what users see in the column.
+- **N2 — Filter keys (`s`/`b`/`o`) are now consistently replacing.** `b`
+  and `o` used to be additive while `s` cleared first; same UI affordance,
+  different semantics. All three now clear-then-select.
+- **N7 — `codesign --verify` timeouts no longer misclassified as caution.**
+  When `codesign --verify` exceeds 20 s (e.g. on Xcode), the finding now
+  emits severity `info` with title "Signature scan inconclusive: …",
+  rather than mislabelling a slow scan as "Signature issue".
+
+### Added
+
+- **N5 — Confirm box itemises the top selected categories.** Users who
+  built selections across `s`/`b`/`o`/Space sometimes saw a different
+  selection at confirm than they expected. The confirm dialog now lists
+  the top 5 selected categories with their sizes plus a `+ N more …`
+  spillover line.
+- **N9 — `Home`/`End`/`PgUp`/`PgDn` keybindings documented in README.**
+  These already worked in the TUI; they're now in the keybindings tables
+  for both the cache selector and the health-check results, with a
+  `Fn+→` note for Macbook keyboards that lack a dedicated End key.
+- **M2 — Network-use disclosure in README.** Added a paragraph clarifying
+  that Maidbook itself is fully offline, while the optional `pip-audit`
+  wrapper does fetch CVE data over HTTPS from the PyPA Advisory Database.
+
+### Tests
+
+Five new regression tests:
+- `test_redact_home_replaces_username_anywhere`
+- `test_format_findings_redacts_username_in_detail`
+- `test_s_filter_selects_by_safety_column`
+- `test_filter_keys_are_replacing_not_additive`
+- `test_codesign_timeout_is_info_not_caution`
+
+35/35 pytest passing.
 
 ## [0.1.0] — 2026-04-16
 

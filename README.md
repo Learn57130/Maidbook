@@ -1,4 +1,8 @@
-# Maidbook
+<p align="center">
+  <img src="assets/banner.png" alt="Maidbook — the tidy Mac keeper" width="100%" />
+</p>
+
+# Maidbook <img src="assets/logo.png" align="right" width="120" />
 
 A tidy cache cleaner + health check for macOS. Single-binary TUI, stdlib-only, no install bloat.
 
@@ -30,19 +34,59 @@ a single-file Python tool that:
 
 The **Health Check** is **not antivirus**. It wraps built-in macOS tools to surface obvious issues. For real signature-based malware scanning use Malwarebytes, Sophos, or Bitdefender. Maidbook will never claim to replace them.
 
+**Network use.** Maidbook itself never makes network connections — no analytics, no telemetry, no auto-update. The optional vulnerability scanner it wraps (`pip-audit`) connects to the PyPA Advisory Database over HTTPS to fetch CVE data. If you want fully offline operation, skip the Health Check or don't install `pip-audit`. `brew outdated` and `npm outdated -g` are local-only by default but may trigger their own update fetches depending on configuration.
+
 ## Install
 
-### From source (recommended for now)
+### With pipx (recommended)
+
+[`pipx`](https://pipx.pypa.io/) installs each Python tool in its own isolated
+venv and puts a symlink in `~/.local/bin/`. No conflicts with system Python
+or other packages, and uninstalling is one command.
 
 ```bash
-git clone https://github.com/Learn57130/maidbook.git
-cd maidbook
+# one-time: install pipx if you don't have it
+brew install pipx
+pipx ensurepath          # adds ~/.local/bin to PATH, restart terminal
+
+# then install Maidbook
+git clone https://github.com/Learn57130/Maidbook.git
+cd Maidbook
+pipx install .
+```
+
+Now `maidbook` works from any directory.
+
+To update later:
+
+```bash
+cd Maidbook && git pull && pipx install --force .
+```
+
+To uninstall:
+
+```bash
+pipx uninstall maidbook
+```
+
+> **Heads-up:** if you run `pipx uninstall maidbook` while you're `cd`'d into
+> the cloned `Maidbook/` folder (or any parent of it), pipx errors out with
+> `'maidbook' looks like a path`. macOS's filesystem is case-insensitive, so
+> `maidbook` resolves to the `Maidbook/` directory and pipx refuses to treat
+> it as a package name. Run the command from a neutral directory — e.g.
+> `(cd /tmp && pipx uninstall maidbook)` — or just `cd ~` first.
+
+### With pip (alternative)
+
+```bash
+git clone https://github.com/Learn57130/Maidbook.git
+cd Maidbook
 pip install --user .
 ```
 
-The `maidbook` command will be installed to your Python user scripts dir
-(usually `~/.local/bin/` or `~/Library/Python/3.x/bin/` on macOS).
-If that's not on your `PATH`, either add it or use `pip install -e .` for a dev install.
+The binary lands in your Python user scripts dir — often
+`~/Library/Python/3.x/bin/maidbook` on macOS. If that's not on your `PATH`,
+either add it or use `pip install -e .` for an editable dev install.
 
 ### From PyPI
 
@@ -76,12 +120,15 @@ maidbook --version
 | Key | Action |
 |---|---|
 | `↑` `↓` / `j` `k` | Move cursor |
+| `Home` | Jump to first row |
+| `End` (`Fn`+`→` on Macbook) | Jump to last row |
+| `PgUp` / `PgDn` | Move 5 rows at a time |
 | `Space` | Toggle selection |
 | `A` | Select all |
 | `N` | Deselect all |
-| `s` | Select safe only |
-| `b` | Select browsers |
-| `o` | Select auto-discovered (other) |
+| `s` | Select everything with safety = `safe` |
+| `b` | Select browsers (replaces current selection) |
+| `o` | Select auto-discovered (replaces current selection) |
 | `d` | Toggle dry-run mode |
 | `r` | Rescan |
 | `↵` | Clean (requires confirmation) |
@@ -91,7 +138,10 @@ maidbook --version
 
 | Key | Action |
 |---|---|
-| `↑` `↓` `PgUp` `PgDn` | Scroll findings |
+| `↑` `↓` / `j` `k` | Scroll one line |
+| `Home` | Jump to first finding |
+| `End` (`Fn`+`→` on Macbook) | Jump to last finding |
+| `PgUp` / `PgDn` | Scroll 10 findings at a time |
 | `C` | Copy full report to clipboard |
 | `r` | Rescan |
 | `m` | Back to menu |
@@ -123,6 +173,30 @@ maidbook --version
 - Optional: `pip-audit` (unlocks Python CVE checks)
 
 Linux is not a target — several checks (XProtect, `codesign`, `xattr`, `pbcopy`) are macOS-specific.
+
+## Roadmap — v0.2 planned
+
+A lean list of what's next. Order is priority-ish, not strict.
+
+- **Intelligent cache discovery** — signature-based scanning for dev-heavy
+  artifacts (`node_modules`, `target/`, `docker`, `__pycache__`) with
+  automated path detection across your projects dir.
+- **Risk grading** — finer tiering of deletable items by "risk level"
+  (low / medium / high) to distinguish safe log cleanup from time-costly
+  build re-compilation.
+- **Headless cron mode** — a `--cron` flag for automated background purges
+  based on user-defined TTL (time-to-live) rules.
+- **Smart whitelisting** — toggle-based "pinning" in the TUI to protect
+  specific active projects from automated cleanup.
+- **Quantitative analytics** — persistent tracking (JSON / SQLite) of
+  cumulative space saved and "bloat velocity" (GB growth over time).
+- **Post-action reporting** — summary logs after each cron execution for
+  full transparency on what was reclaimed.
+- **ASCII mascot integration** — a reactive minimalist mascot inside the
+  TUI that changes state based on how tidy the system is.
+
+Open an issue if you want to discuss scope on any of these, or want to grab
+one to contribute.
 
 ## Contributing
 
