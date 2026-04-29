@@ -133,10 +133,40 @@ Mode lives in `TUI.mode`. Every keypress handler checks `self.mode` first and
 
 ## Testing
 
-Right now: `python -m py_compile maidbook/*.py` in CI + manual smoke. A
-pytest suite would be nice but the scanners are filesystem-coupled — most
-tests would need a synthetic `~/Library/Caches` fixture. Not hard, just not
-done yet. Contribution welcome.
+Pytest suite under `tests/`, organised by surface:
+
+- `test_common.py` — utility helpers (`human`, `fmt_path`, `path_size`,
+  `rm_path`, `is_app_running`)
+- `test_cache.py` — Category scanners + cleaners (pip, brew, browsers,
+  discovery)
+- `test_health.py` — Finding scanners (xprotect, malware, quarantine,
+  vulnerabilities)
+- `test_cli.py` — argparse plumbing + the TUI scan-worker exception
+  isolation contract
+- `test_integration.py` — argparse mode dispatch
+- `test_security.py` — hardening regressions (path-injection, symlink
+  semantics, partial-deletion honesty, redaction, severity classes)
+
+Filesystem coupling is handled with `tmp_path` + `monkeypatch` — patch
+`HOME` / `health.HOME` to point at a fixture directory and build the
+expected layout under it. Subprocess-coupled tests use `unittest.mock.patch`
+on `_run_quiet` / `subprocess.run`. Don't add real-filesystem dependencies.
+
+CI: `.github/workflows/ci.yml` runs the suite on `macos-latest` across
+Python 3.9 / 3.11 / 3.13 in a matrix on every push and PR. Three-version
+matrix × parallel ≈ 2 minutes wall-clock. Treat green CI as the
+non-negotiable gate before tagging a release.
+
+Run locally:
+
+```bash
+pip install ".[test]"
+python -m pytest tests/ -v
+```
+
+Currently 37/37 passing as of v0.1.2. When you fix a bug, add a test that
+locks in the regression in the same commit — the v0.1.1 / v0.1.2 patches
+each shipped with named regression tests, and that's the standard.
 
 ## Things that have been considered and deliberately left out
 
