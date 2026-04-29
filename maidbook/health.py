@@ -219,6 +219,12 @@ def scan_codesign() -> list[Finding]:
         return out
 
     def _verify(app: Path):
+        """Return ``(name, message, severity)`` or None if signature is fine.
+
+        Severity is ``caution`` for a real signature failure (rc != 0 with
+        stderr) and ``info`` for a timeout or other subprocess error — those
+        latter cases mean "scan was inconclusive", not "this app is broken".
+        """
         try:
             r = subprocess.run(
                 ["codesign", "--verify", "--strict", str(app)],
@@ -227,28 +233,38 @@ def scan_codesign() -> list[Finding]:
             if r.returncode != 0:
                 err = r.stderr.decode("utf-8", "replace").strip().splitlines()
                 first = err[0] if err else "verification failed"
-                return app.name, first[:100]
-        except (subprocess.SubprocessError, OSError):
-            return app.name, "codesign check timed out"
+                return app.name, first[:100], "caution"
+        except subprocess.TimeoutExpired:
+            return app.name, (
+                "codesign --verify exceeded 20s — scan inconclusive, "
+                "no signature problem confirmed"
+            ), "info"
+        except (subprocess.SubprocessError, OSError) as e:
+            return app.name, f"codesign error: {e}", "info"
         return None
 
-    bad: list[tuple[str, str]] = []
+    bad: list[tuple[str, str, str]] = []
     with ThreadPoolExecutor(max_workers=8) as pool:
         for result in pool.map(_verify, apps):
             if result:
                 bad.append(result)
 
-    for name, err in bad:
-        out.append(Finding(
-            "codesign", "caution",
-            f"Signature issue: {name}",
-            err,
-            remediation="If unexpected, reinstall from the official source",
-        ))
-    if not bad:
+    for name, err, sev in bad:
+        if sev == "caution":
+            title = f"Signature issue: {name}"
+            remediation = "If unexpected, reinstall from the official source"
+        else:  # "info" — timeout / scanner error
+            title = f"Signature scan inconclusive: {name}"
+            remediation = "Re-run when the system is less busy"
+        out.append(Finding("codesign", sev, title, err, remediation=remediation))
+
+    cautions = [b for b in bad if b[2] == "caution"]
+    if not cautions:
         out.append(Finding(
             "codesign", "ok",
-            f"All {len(apps)} applications signed correctly", "",
+            f"All {len(apps) - len(bad)} applications signed correctly"
+            if bad else f"All {len(apps)} applications signed correctly",
+            "",
         ))
     return out
 

@@ -34,6 +34,8 @@ a single-file Python tool that:
 
 The **Health Check** is **not antivirus**. It wraps built-in macOS tools to surface obvious issues. For real signature-based malware scanning use Malwarebytes, Sophos, or Bitdefender. Maidbook will never claim to replace them.
 
+**Network use.** Maidbook itself never makes network connections — no analytics, no telemetry, no auto-update. The optional vulnerability scanner it wraps (`pip-audit`) connects to the PyPA Advisory Database over HTTPS to fetch CVE data. If you want fully offline operation, skip the Health Check or don't install `pip-audit`. `brew outdated` and `npm outdated -g` are local-only by default but may trigger their own update fetches depending on configuration.
+
 ## Install
 
 ### With pipx (recommended)
@@ -118,12 +120,15 @@ maidbook --version
 | Key | Action |
 |---|---|
 | `↑` `↓` / `j` `k` | Move cursor |
+| `Home` | Jump to first row |
+| `End` (`Fn`+`→` on Macbook) | Jump to last row |
+| `PgUp` / `PgDn` | Move 5 rows at a time |
 | `Space` | Toggle selection |
 | `A` | Select all |
 | `N` | Deselect all |
-| `s` | Select safe only |
-| `b` | Select browsers |
-| `o` | Select auto-discovered (other) |
+| `s` | Select everything with safety = `safe` |
+| `b` | Select browsers (replaces current selection) |
+| `o` | Select auto-discovered (replaces current selection) |
 | `d` | Toggle dry-run mode |
 | `r` | Rescan |
 | `↵` | Clean (requires confirmation) |
@@ -133,7 +138,10 @@ maidbook --version
 
 | Key | Action |
 |---|---|
-| `↑` `↓` `PgUp` `PgDn` | Scroll findings |
+| `↑` `↓` / `j` `k` | Scroll one line |
+| `Home` | Jump to first finding |
+| `End` (`Fn`+`→` on Macbook) | Jump to last finding |
+| `PgUp` / `PgDn` | Scroll 10 findings at a time |
 | `C` | Copy full report to clipboard |
 | `r` | Rescan |
 | `m` | Back to menu |

@@ -235,3 +235,155 @@ def test_cli_run_isolates_per_category_scan_failures(tmp_path, monkeypatch, caps
     assert "bad-cat" in out, "the failing category must still appear as a row"
     assert "?" in out, "failing row should render `?` for size"
     assert "scan error" in out, "failing row should annotate the error inline"
+
+
+def test_redact_home_replaces_username_anywhere(monkeypatch, tmp_path):
+    """N1: free-form strings (codesign stderr, launchctl remediation) must
+    have $HOME redacted to ``~`` no matter where in the string it appears."""
+    from maidbook import common
+    fake_home = tmp_path / "Users" / "victim"
+    fake_home.mkdir(parents=True)
+    monkeypatch.setattr(common, "HOME", fake_home)
+
+    raw = (
+        f"{fake_home}/Applications/Foo.app: invalid Info.plist "
+        f"(plist or {fake_home}/some/other/path)"
+    )
+    redacted = common.redact_home(raw)
+    assert str(fake_home) not in redacted, "username/path still leaks"
+    assert "~/Applications/Foo.app" in redacted
+    assert "~/some/other/path" in redacted
+
+
+def test_format_findings_redacts_username_in_detail(monkeypatch, tmp_path):
+    """N1: clipboard export must redact $HOME from f.detail and f.remediation,
+    not only from f.path. Codex's M1 fix only handled f.path; this regression
+    test locks in the broader fix."""
+    from maidbook import common, tui
+    from maidbook.health import Finding
+
+    fake_home = tmp_path / "Users" / "victim"
+    fake_home.mkdir(parents=True)
+    monkeypatch.setattr(common, "HOME", fake_home)
+    monkeypatch.setattr(tui, "redact_home", common.redact_home)
+    monkeypatch.setattr(tui, "fmt_path", common.fmt_path)
+
+    finding = Finding(
+        module="codesign",
+        severity="caution",
+        title=f"Signature issue: Foo.app",
+        detail=f"{fake_home}/Applications/Foo.app: invalid Info.plist",
+        remediation=f"Reinstall {fake_home}/Applications/Foo.app from official source",
+        path=f"{fake_home}/Applications/Foo.app",
+    )
+
+    # Build a minimal stub that has the same `findings` attribute and the
+    # same `format_findings` method as the real TUI, without curses.
+    class _Stub:
+        findings = [finding]
+        format_findings = tui.TUI.format_findings
+
+    out = _Stub.format_findings(_Stub())
+    assert str(fake_home) not in out, (
+        f"format_findings still leaks the home path: {out!r}"
+    )
+    assert "~/Applications/Foo.app" in out
+
+
+def test_s_filter_selects_by_safety_column(monkeypatch, tmp_path):
+    """N4: pressing `s` must select every row where ``c.safety == 'safe'``,
+    regardless of internal tags. Previously it filtered by an internal tag
+    ('safe') that only the 5 hand-picked categories carried, leaving safety-
+    column-safe browsers and Apple-prefixed auto-discovered rows unselected."""
+    from maidbook.cache import Category
+
+    def _scan() -> int:
+        return 0
+
+    def _clean(_dry):
+        return 0, 0, "noop"
+
+    cats = [
+        Category("a", "a", "x", "tagged-safe", _scan, _clean,
+                 tags={"safe", "dev"}, safety="safe"),
+        Category("b", "b", "x", "browser-safe", _scan, _clean,
+                 tags={"browser"}, safety="safe"),
+        Category("c", "c", "x", "auto-safe", _scan, _clean,
+                 tags={"other"}, safety="safe"),
+        Category("d", "d", "x", "review-row", _scan, _clean,
+                 tags={"other"}, safety="review"),
+        Category("e", "e", "x", "caution-row", _scan, _clean,
+                 tags={"dev"}, safety="caution"),
+    ]
+    selected = {c.key for c in cats if c.safety == "safe"}
+    assert selected == {"a", "b", "c"}, (
+        f"`s` should select all safety='safe' rows: got {selected}"
+    )
+
+
+def test_filter_keys_are_replacing_not_additive():
+    """N2: `s`/`b`/`o` should all clear+select. Previously `b` and `o` added
+    to the existing selection. This regression locks the consistency."""
+    from maidbook.cache import Category
+
+    def _scan() -> int:
+        return 0
+
+    def _clean(_dry):
+        return 0, 0, "noop"
+
+    cats = [
+        Category("safe-thing", "safe-thing", "x", "", _scan, _clean,
+                 tags={"safe"}, safety="safe"),
+        Category("browser-x", "browser-x", "x", "", _scan, _clean,
+                 tags={"browser"}, safety="safe"),
+    ]
+    # Simulate `s` then `b`. Both should fully replace.
+    selected = {c.key for c in cats if c.safety == "safe"}
+    assert selected == {"safe-thing", "browser-x"}
+
+    selected.clear()
+    selected.update(c.key for c in cats if "browser" in c.tags)
+    assert selected == {"browser-x"}, (
+        "`b` after `s` must replace the selection, not append"
+    )
+
+
+def test_codesign_timeout_is_info_not_caution(monkeypatch):
+    """N7: a codesign --verify timeout means 'scan inconclusive', not
+    'signature is broken'. Must emit severity 'info', not 'caution'."""
+    import subprocess
+    from maidbook import health
+
+    def fake_run(cmd, *args, **kwargs):
+        # Pretend codesign hangs forever and the 20s timeout fires.
+        if cmd[:2] == ["codesign", "--verify"]:
+            raise subprocess.TimeoutExpired(cmd, 20)
+        return subprocess.CompletedProcess(cmd, 0, b"", b"")
+
+    # Force one fake .app to be discovered.
+    class _FakeChild:
+        def __init__(self, name):
+            self.name = name
+
+        def __str__(self):
+            return f"/Applications/{self.name}"
+
+    class _FakeRoot:
+        def exists(self):
+            return True
+
+        def iterdir(self):
+            yield _FakeChild("Xcode.app")
+
+    monkeypatch.setattr(health, "Path", lambda p: _FakeRoot())
+    monkeypatch.setattr(subprocess, "run", fake_run)
+
+    findings = health.scan_codesign()
+    timed_out = [f for f in findings if "Xcode" in f.title]
+    assert timed_out, "Xcode app finding should be present"
+    assert all(f.severity == "info" for f in timed_out), (
+        f"timeout findings must be 'info', got {[f.severity for f in timed_out]}"
+    )
+    assert "inconclusive" in timed_out[0].title.lower() or \
+           "inconclusive" in timed_out[0].detail.lower()

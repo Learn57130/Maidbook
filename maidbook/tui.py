@@ -18,7 +18,7 @@ from datetime import datetime
 from .common import (
     APP_NAME, APP_TAGLINE, BOX_BL, BOX_BR, BOX_H, BOX_TL, BOX_TR, BOX_V,
     BULLET, MARK_CURSOR, MARK_SELECTED, MARK_UNSELECTED, SPINNER,
-    fmt_path, human, is_app_running,
+    fmt_path, human, is_app_running, redact_home,
 )
 from .cache import Category, build_categories
 from .health import Finding, HealthModule, HEALTH_MODULES
@@ -280,13 +280,14 @@ class TUI:
                                  if m.key == f.module), f.module)
                 lines.append(f"# {mod_name}")
             glyph = sev_glyph.get(f.severity, "·")
-            lines.append(f"  {glyph} [{f.severity}] {f.title}")
+            lines.append(f"  {glyph} [{f.severity}] {redact_home(f.title)}")
             if f.detail:
-                lines.append(f"      {f.detail}")
+                # Redact $HOME → ~ inside free-form text so pasted reports
+                # don't leak the username via codesign / launchctl strings.
+                lines.append(f"      {redact_home(f.detail)}")
             if f.remediation:
-                lines.append(f"      → {f.remediation}")
+                lines.append(f"      → {redact_home(f.remediation)}")
             if f.path:
-                # Redact $HOME → ~ so pasted reports don't leak the username.
                 lines.append(f"      {fmt_path(f.path)}")
         return "\n".join(lines) + "\n"
 
@@ -501,9 +502,9 @@ class TUI:
                 lines.append(("section", mod_name))
             lines.append(("finding", f))
             if f.detail:
-                lines.append(("detail", f.detail))
+                lines.append(("detail", redact_home(f.detail)))
             if f.remediation:
-                lines.append(("remediation", f.remediation))
+                lines.append(("remediation", redact_home(f.remediation)))
             if f.path:
                 # Redact $HOME → ~ in the on-screen display too, so it stays
                 # consistent with the clipboard export.
@@ -746,14 +747,31 @@ class TUI:
                         if c.key in self.selected)
         box_w = min(60, w - 6)
         mode = "dry-run — nothing deleted" if self.dry_run else "DELETE FILES"
+
+        # N5: itemise the top selected categories so the user sees exactly
+        # what's about to be cleaned. Selection drift between dry-run and
+        # real-run is a common foot-gun without this.
+        selected_cats = sorted(
+            (c for c in self.cats if c.key in self.selected),
+            key=lambda c: -self.sizes.get(c.key, 0),
+        )
+        N_PREVIEW = 5
+
         body = [
             f"{BULLET} Confirm cleanup",
             f"  mode       {mode}",
             f"  categories {len(self.selected)}",
             f"  estimate   {human(total_sel)}",
             "",
-            "  ❯ [y] proceed    [n] cancel",
+            "  about to clean:",
         ]
+        for c in selected_cats[:N_PREVIEW]:
+            sz = human(self.sizes.get(c.key, 0))
+            name = c.name if len(c.name) <= 28 else c.name[:27] + "…"
+            body.append(f"    • {name:<28} {sz:>10}")
+        if len(selected_cats) > N_PREVIEW:
+            body.append(f"    + {len(selected_cats) - N_PREVIEW} more …")
+        body.extend(["", "  ❯ [y] proceed    [n] cancel"])
         box_h = len(body) + 2
         y0 = h - box_h - 4
         x0 = 2
@@ -957,11 +975,20 @@ class TUI:
                 elif ch in (ord("n"), ord("N")):
                     self.selected.clear()
                 elif ch == ord("s"):
-                    self.selected.clear()
-                    self.select_by_tag("safe")
+                    # N4: match the visible "safety" column, not the internal
+                    # tag — so browsers (safety=safe) and Apple-prefixed
+                    # auto-discovered rows (safety=safe via classify_discovered)
+                    # are picked up alongside the curated 5 hand-tagged ones.
+                    self.selected = {
+                        c.key for c in self.cats if c.safety == "safe"
+                    }
                 elif ch == ord("b"):
+                    # N2: clear-then-select for consistency with `s`.
+                    self.selected.clear()
                     self.select_by_tag("browser")
                 elif ch == ord("o"):
+                    # N2: clear-then-select for consistency with `s`.
+                    self.selected.clear()
                     self.select_by_tag("other")
                 elif ch == ord("d"):
                     self.dry_run = not self.dry_run

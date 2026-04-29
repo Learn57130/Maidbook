@@ -96,6 +96,22 @@ def fmt_path(p: Path | str) -> str:
     return s
 
 
+def redact_home(text: str) -> str:
+    """Replace any literal ``$HOME`` substring inside an arbitrary string with ``~``.
+
+    Use this when sanitising free-form text that may *contain* paths but isn't
+    a path itself — error strings from external tools (``codesign --verify``
+    stderr, ``launchctl unload`` remediation messages, etc.). For path values
+    that come in already-canonical form, prefer :func:`fmt_path`.
+    """
+    if not text:
+        return text
+    home = str(HOME)
+    if home not in text:
+        return text
+    return text.replace(home, "~")
+
+
 def rm_path(p: Path) -> tuple[int, int]:
     """Delete a file or directory. Returns ``(bytes_freed, errors)``.
 
