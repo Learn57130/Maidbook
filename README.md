@@ -194,6 +194,11 @@ A lean list of what's next. Order is priority-ish, not strict.
   full transparency on what was reclaimed.
 - **ASCII mascot integration** — a reactive minimalist mascot inside the
   TUI that changes state based on how tidy the system is.
+- **AI-agent skill audit** — a 6th health module that scans `~/.claude/`,
+  `~/.codex/`, `~/.gemini/` skill directories for broken symlinks, orphan
+  `SKILL.md` files, and suspicious shell hooks in frontmatter. Read-only
+  audit only; full skill management (sync, install, uninstall) stays out
+  of scope and lives in dedicated tooling.
 
 Open an issue if you want to discuss scope on any of these, or want to grab
 one to contribute.

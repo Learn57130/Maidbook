@@ -24,6 +24,11 @@ All notable changes to Maidbook. Format loosely follows
 - Graceful Ctrl+C during clean (threading.Event stop signal).
 - Within-category progress (current path / file count) during cleanup.
 - Vim-style end-of-list (`G` / `gg`) and selection wrap-around.
+- AI-agent skill audit (`scan_skills` health module) — read-only audit of
+  `~/.claude/skills`, `~/.codex/skills`, `~/.gemini/...` for broken
+  symlinks (caution), orphan SKILL.md files (info), and suspicious shell
+  hooks in skill frontmatter (review). Audit-only, no cleanup actions —
+  the *management* layer stays out of Maidbook's scope.
 
 ## [0.1.2] — 2026-04-30
 
