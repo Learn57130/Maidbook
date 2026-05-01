@@ -38,6 +38,62 @@ The **Health Check** is **not antivirus**. It wraps built-in macOS tools to surf
 
 ## Install
 
+### Quick check — do you have what you need?
+
+Open Terminal and run:
+
+```bash
+python3 --version    # need 3.9 or newer (already on every modern Mac)
+which pipx           # if it prints a path, you're set
+```
+
+If `pipx` prints a path, skip ahead to **With pipx (recommended)**. If
+`pipx` says "not found", do the **First-time setup** below — it takes
+about two minutes and is one-time only.
+
+### First-time setup (only if you don't have `pipx`)
+
+Maidbook needs `pipx` to install cleanly. The easiest way to get `pipx`
+on macOS is via Homebrew. If you've never installed developer tools on
+this Mac, work through the steps below in order.
+
+**1. Install Homebrew** — the macOS package manager.
+
+```bash
+/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
+```
+
+When the installer finishes, it prints **two `eval` lines** at the
+bottom telling you to add `brew` to your shell. Copy and paste both
+into Terminal — without that step, `brew` won't be on your `PATH`.
+
+Verify:
+
+```bash
+brew --version
+```
+
+**2. Install `pipx`.**
+
+```bash
+brew install pipx
+pipx ensurepath
+```
+
+**Close and reopen Terminal** so the new `PATH` takes effect, then
+verify:
+
+```bash
+pipx --version
+```
+
+You're ready for the install step below.
+
+> **Don't want Homebrew?** You can skip Homebrew entirely and use the
+> **With pip (alternative)** section further down — it installs Maidbook
+> straight into your Python user-scripts dir. Slightly more `PATH`
+> finicky, but pure Python and no extra package manager.
+
 ### With pipx (recommended)
 
 [`pipx`](https://pipx.pypa.io/) installs each Python tool in its own isolated
@@ -45,11 +101,6 @@ venv and puts a symlink in `~/.local/bin/`. No conflicts with system Python
 or other packages, and uninstalling is one command.
 
 ```bash
-# one-time: install pipx if you don't have it
-brew install pipx
-pipx ensurepath          # adds ~/.local/bin to PATH, restart terminal
-
-# then install Maidbook
 git clone https://github.com/Learn57130/Maidbook.git
 cd Maidbook
 pipx install .
@@ -168,9 +219,23 @@ maidbook --version
 
 ## Requirements
 
+**Required**
+
 - **macOS** (Monterey 12+, tested on Sequoia 15)
-- **Python 3.9+**
-- Optional: `pip-audit` (unlocks Python CVE checks)
+- **Python 3.9+** (already on every modern Mac)
+
+**Optional — Maidbook works without these, but they unlock more findings**
+
+| Tool | What you get if it's installed |
+|---|---|
+| [`pipx`](https://pipx.pypa.io/) | The cleanest install path (see *Install* above) |
+| [`pip-audit`](https://pypi.org/project/pip-audit/) | Python package CVE scan in the Health Check |
+| [Homebrew](https://brew.sh/) (`brew`) | "Outdated formula" check in the Health Check |
+| [Node.js](https://nodejs.org/) (`npm`) | npm cache cleaning + "outdated global package" check |
+
+If none of the optional tools are installed, Maidbook still runs — the
+relevant rows just appear as `info: not installed` instead of producing
+findings. Nothing crashes; nothing pesters you to install anything.
 
 Linux is not a target — several checks (XProtect, `codesign`, `xattr`, `pbcopy`) are macOS-specific.
 
