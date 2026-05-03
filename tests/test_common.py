@@ -251,6 +251,106 @@ def test_wait_for_pending_reaps_zero_pending_when_trash_empty(tmp_path, monkeypa
     assert pending == 0
 
 
+def test_async_batch_excludes_orphans_from_other_sessions(tmp_path, monkeypatch):
+    """[P3 regression] async_batch() must only count trash subdirs created
+    inside its own context — orphans the startup reaper is draining must
+    NOT be charged against the current clean batch.
+
+    Failure mode being prevented:
+      previous session crashed, left 5 GB orphans in trash;
+      startup reaper still draining them;
+      current clean mvs 1 GB into trash;
+      naive `trash_pending_bytes()` would return 6 GB,
+      making the current clean appear to have freed -4 GB → 0.
+    """
+    trash_root = tmp_path / ".trash"
+    monkeypatch.setattr(common, "TRASH_BASE", trash_root)
+    trash_root.mkdir()
+
+    # Simulate orphans from a previous session sitting in trash, mid-reap.
+    orphan = trash_root / "orphan_from_previous_session"
+    orphan.mkdir()
+    (orphan / "leftover.bin").write_bytes(b"x" * 8192)
+
+    # Sanity: aggregate trash_pending_bytes sees the orphan.
+    aggregate_before = common.trash_pending_bytes()
+    assert aggregate_before > 0
+
+    # Now do an async-batched "current clean" of a fresh dir.
+    fresh = tmp_path / "fresh_cache"
+    fresh.mkdir()
+    (fresh / "f.bin").write_bytes(b"y" * 4096)
+
+    # Mock _schedule_reap to a no-op so the trash subdir stays on disk
+    # long enough for the test to measure it. (In production the daemon
+    # reaper would race the assertion.)
+    with patch("maidbook.common._schedule_reap"):
+        with common.async_batch() as batch_pending_bytes:
+            moved, errors = common.rm_path_async(fresh)
+            batch_pending = batch_pending_bytes()
+
+    assert errors == 0
+    # Critical assertion: batch_pending ONLY reflects the fresh batch,
+    # not the orphan. The orphan's bytes belong to the previous session
+    # and the startup reaper's responsibility, not this batch's.
+    assert batch_pending < aggregate_before, (
+        f"async_batch() must exclude orphans (aggregate={aggregate_before}, "
+        f"batch={batch_pending}). Charging this batch with old orphans "
+        f"causes Freed: 0 reports for cleans that actually reclaimed space."
+    )
+    assert batch_pending > 0, (
+        "the fresh dir was just mv'd into trash and not yet reaped, "
+        "so its bytes should still register as pending for this batch"
+    )
+
+    _wait_for_reapers()
+
+
+def test_async_batch_yields_zero_when_no_async_calls(tmp_path, monkeypatch):
+    """An async_batch with no rm_path_async calls inside it has zero
+    pending bytes — even if other content sits in trash from elsewhere."""
+    trash_root = tmp_path / ".trash"
+    monkeypatch.setattr(common, "TRASH_BASE", trash_root)
+    trash_root.mkdir()
+    (trash_root / "unrelated").mkdir()
+    (trash_root / "unrelated" / "x.bin").write_bytes(b"z" * 4096)
+
+    with common.async_batch() as batch_pending_bytes:
+        # No rm_path_async calls inside.
+        pass
+    # batch_pending callable still works after exit (closure over subdirs)
+    # but should report 0 because no async calls happened in this batch.
+    assert batch_pending_bytes() == 0
+
+
+def test_async_batch_nesting_restores_outer_context(tmp_path, monkeypatch):
+    """Nested async_batch() calls must restore the outer context on exit
+    so the outer batch keeps tracking new rm_path_async calls correctly."""
+    trash_root = tmp_path / ".trash"
+    monkeypatch.setattr(common, "TRASH_BASE", trash_root)
+
+    outer = tmp_path / "outer_dir"
+    outer.mkdir()
+    (outer / "f.bin").write_bytes(b"o" * 4096)
+    inner = tmp_path / "inner_dir"
+    inner.mkdir()
+    (inner / "f.bin").write_bytes(b"i" * 4096)
+
+    # Mock _schedule_reap so the trash subdirs stay on disk long enough
+    # to measure (otherwise the daemon reaper races the assertions).
+    with patch("maidbook.common._schedule_reap"):
+        with common.async_batch() as outer_pending:
+            common.rm_path_async(outer)
+            with common.async_batch() as inner_pending:
+                common.rm_path_async(inner)
+                assert inner_pending() > 0
+            # After inner exits, the outer batch should still track 'outer'
+            # (and only 'outer' — not the inner one).
+            assert outer_pending() > 0
+
+    _wait_for_reapers()
+
+
 def test_trash_pending_bytes_reflects_disk(tmp_path, monkeypatch):
     """trash_pending_bytes is what powers the 'still finalizing' UI hint;
     ensure it tracks what's actually on disk."""

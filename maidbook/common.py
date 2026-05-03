@@ -6,6 +6,7 @@ other modules depend on this one, not the other way around.
 
 from __future__ import annotations
 
+import contextlib
 import locale
 import os
 import shutil
@@ -188,6 +189,14 @@ TRASH_BASE = HOME / ".maidbook" / "trash"
 _REAPER_THREADS: list[threading.Thread] = []
 _REAPER_LOCK = threading.Lock()
 
+# Thread-local batch tracker. When a thread enters async_batch(), every
+# rm_path_async call on that thread also records its trash subdir into
+# the batch so the caller can later ask "of all the trash dirs my code
+# created in this batch, how many bytes are still pending?". This avoids
+# charging the current batch with bytes that belong to orphan subdirs
+# the startup reaper happens to be draining at the same time.
+_CURRENT_BATCH = threading.local()
+
 
 def _new_trash_dir() -> Path:
     """Create and return a unique subdir under :data:`TRASH_BASE`."""
@@ -263,7 +272,53 @@ def rm_path_async(p: Path) -> tuple[int, int]:
         return rm_path(p)
 
     _schedule_reap(trash)
+
+    # If a batch is active on this thread, record the trash subdir so
+    # the caller can later sum just this batch's pending bytes (rather
+    # than the whole TRASH_BASE which may include unrelated orphans).
+    batch_subdirs = getattr(_CURRENT_BATCH, "subdirs", None)
+    if batch_subdirs is not None:
+        batch_subdirs.append(trash)
+
     return size_before, 0
+
+
+@contextlib.contextmanager
+def async_batch():
+    """Context manager: track per-batch trash subdirs for honest reporting.
+
+    Yields a zero-arg callable. Calling it returns the total disk usage
+    of the trash subdirs created by ``rm_path_async`` calls inside this
+    context (and on this thread). Subdirs already drained by the reaper
+    contribute 0.
+
+    This is the right number to subtract from a batch's claimed
+    ``total_freed`` to get a truly-reclaimed figure — using
+    :func:`trash_pending_bytes` for the same purpose would incorrectly
+    charge the current batch for orphans being drained by the startup
+    reaper.
+
+    Usage::
+
+        with async_batch() as batch_pending:
+            for c in selected:
+                freed, errs, msg = c.clean(...)
+                ...
+            wait_for_pending_reaps(timeout=5.0)
+            actually_freed = max(0, total_freed - batch_pending())
+    """
+    previous = getattr(_CURRENT_BATCH, "subdirs", None)
+    subdirs: list[Path] = []
+    _CURRENT_BATCH.subdirs = subdirs
+
+    def _pending() -> int:
+        return sum(path_size(d) for d in subdirs if d.exists())
+
+    try:
+        yield _pending
+    finally:
+        # Restore previous batch context so nested cleans still work.
+        _CURRENT_BATCH.subdirs = previous
 
 
 def trash_pending_bytes() -> int:
