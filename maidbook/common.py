@@ -10,6 +10,9 @@ import locale
 import os
 import shutil
 import subprocess
+import threading
+import time
+import uuid
 from pathlib import Path
 
 # Required on macOS for UTF-8 in curses (locale must be set BEFORE curses
@@ -153,6 +156,157 @@ def rm_path(p: Path) -> tuple[int, int]:
     size_after = path_size(p) if p.exists() else 0
     freed = max(0, size_before - size_after)
     return freed, errors
+
+
+# ---------------------------------------------------------------------------
+# Async deletion via mv-then-rmtree
+# ---------------------------------------------------------------------------
+#
+# Cache trees with tens of thousands of inodes (npm, ~/.cache, Xcode
+# DerivedData) take seconds-to-minutes to ``shutil.rmtree`` directly. The
+# user perceives that as a frozen UI even though the worker thread is making
+# real progress.
+#
+# The trick: an ``os.rename`` of a directory within the same filesystem is
+# essentially free — APFS just updates a single inode entry. Move the cache
+# tree into ``~/.maidbook/trash/<unique>/``, return immediately with the
+# moved size, and let a background daemon thread handle the actual
+# ``shutil.rmtree`` on its own time.
+#
+# Honesty contract preserved: the bytes reported are the bytes that were
+# *moved out of the original location*. From the user's perspective the
+# cache is gone (the original path no longer exists). The disk-space
+# reclamation lags by however long the background reaper takes — usually
+# seconds, occasionally a minute or two for huge trees. Any orphan trash
+# left from a previous session is reaped at next startup.
+#
+# If the rename fails (cross-filesystem move, permissions), we fall back
+# to synchronous ``rm_path`` so the contract still holds.
+
+TRASH_BASE = HOME / ".maidbook" / "trash"
+
+_REAPER_THREADS: list[threading.Thread] = []
+_REAPER_LOCK = threading.Lock()
+
+
+def _new_trash_dir() -> Path:
+    """Create and return a unique subdir under :data:`TRASH_BASE`."""
+    TRASH_BASE.mkdir(parents=True, exist_ok=True)
+    # Timestamp + short uuid keeps multiple parallel cleans from colliding.
+    name = f"{int(time.time())}-{uuid.uuid4().hex[:8]}"
+    d = TRASH_BASE / name
+    d.mkdir()
+    return d
+
+
+def _reap_one(trash_subdir: Path) -> None:
+    """Background worker: ``shutil.rmtree`` a trash subdir, swallow errors.
+
+    Errors are intentionally silent — by the time the reaper runs, the user
+    has already moved on. The orphan-reaper at next startup will retry any
+    paths this thread couldn't finish.
+    """
+    try:
+        shutil.rmtree(trash_subdir, ignore_errors=True)
+    except OSError:
+        # Defensive: shutil.rmtree(..., ignore_errors=True) shouldn't raise,
+        # but a permission error during the recursive walk has been seen on
+        # some macOS configs. Either way, leave it for next-startup reap.
+        pass
+
+
+def _schedule_reap(trash_subdir: Path) -> None:
+    """Spawn a daemon thread to delete ``trash_subdir`` in the background."""
+    t = threading.Thread(
+        target=_reap_one, args=(trash_subdir,),
+        name=f"maidbook-reaper-{trash_subdir.name}", daemon=True,
+    )
+    t.start()
+    with _REAPER_LOCK:
+        _REAPER_THREADS.append(t)
+
+
+def rm_path_async(p: Path) -> tuple[int, int]:
+    """Delete a path with perceived-speed optimisation.
+
+    Returns ``(bytes_moved, errors)`` — same shape as :func:`rm_path`.
+
+    For a **directory**: rename it into ``~/.maidbook/trash/<unique>/`` and
+    spawn a background daemon thread to ``shutil.rmtree`` the trash entry.
+    The rename is essentially instant (single APFS metadata update), so the
+    caller returns immediately.
+
+    For a **file or symlink**: delegates to :func:`rm_path` — single-file
+    deletion is already fast and gains nothing from being deferred.
+
+    Falls back to :func:`rm_path` if the rename fails (cross-filesystem
+    move, permission error). The honesty contract from :func:`rm_path` is
+    preserved end-to-end.
+    """
+    if not p.exists() and not p.is_symlink():
+        return 0, 0
+
+    # Files / symlinks: no perceived-speed win from going async.
+    if p.is_file() or p.is_symlink():
+        return rm_path(p)
+
+    # Directory: try the rename trick.
+    size_before = path_size(p)
+    try:
+        trash = _new_trash_dir()
+        target = trash / p.name
+        os.rename(str(p), str(target))
+    except OSError:
+        # Cross-filesystem, permission denied, or anything else — fall back
+        # to the synchronous honest path so the caller still gets accurate
+        # numbers.
+        return rm_path(p)
+
+    _schedule_reap(trash)
+    return size_before, 0
+
+
+def reap_pending_trash() -> int:
+    """Remove any leftover trash subdirs from prior sessions.
+
+    Returns the number of subdirs reaped. Intended to be called once at
+    startup so a crash or force-quit during a previous clean doesn't leave
+    space unreclaimed indefinitely.
+    """
+    if not TRASH_BASE.exists():
+        return 0
+    count = 0
+    try:
+        entries = list(TRASH_BASE.iterdir())
+    except OSError:
+        return 0
+    for d in entries:
+        if not d.is_dir():
+            continue
+        try:
+            shutil.rmtree(d, ignore_errors=True)
+            count += 1
+        except OSError:
+            continue
+    return count
+
+
+def wait_for_pending_reaps(timeout: float = 2.0) -> int:
+    """Wait briefly for in-flight background reapers to finish.
+
+    Returns the number of reapers still running after the timeout. Intended
+    to be called at app exit so small cleans finish synchronously while big
+    ones are left for the next-startup reaper.
+    """
+    deadline = time.monotonic() + timeout
+    with _REAPER_LOCK:
+        threads = list(_REAPER_THREADS)
+    for t in threads:
+        remaining = max(0.0, deadline - time.monotonic())
+        t.join(timeout=remaining)
+    with _REAPER_LOCK:
+        still_alive = sum(1 for t in _REAPER_THREADS if t.is_alive())
+    return still_alive
 
 
 # ---------------------------------------------------------------------------

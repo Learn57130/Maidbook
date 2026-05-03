@@ -131,6 +131,31 @@ Mode lives in `TUI.mode`. Every keypress handler checks `self.mode` first and
   internally so one huge subdirectory doesn't stall the parent task.
 - Findings severity sort uses a dict-based rank so order is stable.
 
+### Async deletion (mv-then-rmtree)
+
+Cache deletion uses `common.rm_path_async()` for directories. The trick:
+
+1. `os.rename(cache_dir, ~/.maidbook/trash/<unique>/)` — instant on APFS
+   (single inode update), regardless of how many files are inside.
+2. A daemon thread `shutil.rmtree`'s the trash subdir in the background.
+3. The caller returns `(bytes_moved, 0)` immediately — from the user's
+   perspective the cache is *gone*, even though disk reclamation lags
+   behind by seconds-to-minutes for huge trees.
+
+`rm_path_async` falls back to synchronous `rm_path` if the rename fails
+(cross-filesystem, permission denied), so the honesty contract holds in
+either path. Files and symlinks always go through `rm_path` — there's no
+perceived-speed gain from deferring a single `unlink`.
+
+**Lifecycle hooks** in `__main__.py`:
+- `reap_pending_trash()` runs at startup to clean up any orphans left
+  by a previous session crash / force-quit.
+- `wait_for_pending_reaps(timeout=2.0)` runs at exit so small cleans
+  finish in-session; bigger ones are left for the next-startup reap.
+
+**Don't switch the cleaners back to `rm_path`** for browser / `~/.cache` /
+DerivedData paths — they're the exact case async was built for.
+
 ## Testing
 
 Pytest suite under `tests/`, organised by surface:
@@ -187,3 +212,33 @@ each shipped with named regression tests, and that's the standard.
 Favor: **read-only**, **confirm before destructive**, **honest labels over
 clever heuristics**. If a change could surprise a user or delete something
 unexpected, surface it — don't hide it behind a `safe` tag.
+
+
+## Recent Changes
+
+### [Minor Change] 2026-05-01 22:06
+
+Files modified:
+- `README.md`
+
+Diff:  1 file changed, 21 insertions(+)
+
+---
+
+### [Minor Change] 2026-04-30 20:02
+
+Files modified:
+- `README.md`
+
+Diff:  1 file changed, 12 insertions(+)
+
+---
+
+### [Minor Change] 2026-04-30 01:18
+
+Files modified:
+- `CLAUDE.md`
+
+Diff:  1 file changed, 21 insertions(+)
+
+---

@@ -15,7 +15,7 @@ import sys
 
 from . import __version__
 from .cli import run_cli
-from .common import APP_NAME, APP_TAGLINE
+from .common import APP_NAME, APP_TAGLINE, reap_pending_trash, wait_for_pending_reaps
 from .tui import run_tui
 
 
@@ -34,19 +34,29 @@ def main() -> int:
                    version=f"%(prog)s {__version__}")
     args = p.parse_args()
 
-    if args.cli:
-        run_cli(dry_run=args.dry_run, clean_all=args.all)
-        return 0
+    # Reap any leftover trash from a previous session before doing real work.
+    # Cheap if the trash dir is empty (the common case).
+    reap_pending_trash()
 
     try:
-        run_tui()
-    except KeyboardInterrupt:
+        if args.cli:
+            run_cli(dry_run=args.dry_run, clean_all=args.all)
+            return 0
+
+        try:
+            run_tui()
+        except KeyboardInterrupt:
+            return 0
+        except curses.error as e:
+            print(f"curses error: {e}")
+            print("Falling back to CLI. Use --cli to skip the TUI next time.")
+            run_cli(dry_run=args.dry_run, clean_all=args.all)
         return 0
-    except curses.error as e:
-        print(f"curses error: {e}")
-        print("Falling back to CLI. Use --cli to skip the TUI next time.")
-        run_cli(dry_run=args.dry_run, clean_all=args.all)
-    return 0
+    finally:
+        # Give in-flight background reapers a moment to finish so small
+        # cleans complete fully in-session. Anything still running gets
+        # picked up by reap_pending_trash() at next startup.
+        wait_for_pending_reaps(timeout=2.0)
 
 
 if __name__ == "__main__":

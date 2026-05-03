@@ -17,7 +17,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable
 
-from .common import HOME, fmt_path, is_app_running, path_size, rm_path
+from .common import HOME, fmt_path, is_app_running, path_size, rm_path, rm_path_async
 
 
 @dataclass
@@ -182,7 +182,7 @@ def make_browser_cleaner(display: str, proc: str, rel: str):
             if dry:
                 freed += path_size(t)
             else:
-                s, e = rm_path(t)
+                s, e = rm_path_async(t)
                 freed += s
                 errs += e
         if count == 0:
@@ -226,7 +226,7 @@ def clean_safe_caches(dry: bool) -> tuple[int, int, str]:
         if dry:
             freed += path_size(p)
         else:
-            s, e = rm_path(p)
+            s, e = rm_path_async(p)
             freed += s
             errs += e
     if count == 0:
@@ -249,7 +249,7 @@ def clean_dotcache(dry: bool) -> tuple[int, int, str]:
         if dry:
             freed += path_size(child)
         else:
-            s, e = rm_path(child)
+            s, e = rm_path_async(child)
             freed += s
             errs += e
     verb = "would clear" if dry else "cleared"
@@ -269,7 +269,7 @@ def clean_xcode(dry: bool) -> tuple[int, int, str]:
         if dry:
             freed += path_size(child)
         else:
-            s, e = rm_path(child)
+            s, e = rm_path_async(child)
             freed += s
             errs += e
     verb = "would clear" if dry else "cleared"
@@ -314,7 +314,7 @@ def make_discovered_cleaner(path: Path):
             return 0, 0, "missing"
         if dry:
             return path_size(path), 0, "would remove"
-        s, e = rm_path(path)
+        s, e = rm_path_async(path)
         return s, e, "removed" if e == 0 else f"errors: {e}"
 
     return scan, clean
