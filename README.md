@@ -4,6 +4,11 @@
 
 # Maidbook <img src="https://raw.githubusercontent.com/Learn57130/Maidbook/main/assets/logo.png" align="right" width="120" />
 
+[![PyPI version](https://img.shields.io/pypi/v/maidbook.svg)](https://pypi.org/project/maidbook/)
+[![Python versions](https://img.shields.io/pypi/pyversions/maidbook.svg)](https://pypi.org/project/maidbook/)
+[![License: MIT](https://img.shields.io/pypi/l/maidbook.svg)](https://github.com/Learn57130/Maidbook/blob/main/LICENSE)
+[![CI](https://github.com/Learn57130/Maidbook/actions/workflows/ci.yml/badge.svg)](https://github.com/Learn57130/Maidbook/actions/workflows/ci.yml)
+
 A tidy cache cleaner + health check for macOS. Single-binary TUI, stdlib-only, no install bloat.
 
 ```
