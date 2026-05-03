@@ -179,33 +179,56 @@ class TUI:
                     ("", 0)]
 
         total_freed, total_errs = 0, 0
-        for c in selected:
-            self.active_item = c.name
-            running = [a for a in c.requires_apps_closed if is_app_running(a)]
-            if running and not self.dry_run:
-                self.log.append((f"⏭  {c.name:<22} skipped — {', '.join(running)} running", 3))
+        # Wrap the batch in async_batch() so we can later ask for *this
+        # batch's* pending bytes — not the whole TRASH_BASE, which may
+        # include orphans the startup reaper is still draining.
+        from .common import async_batch, wait_for_pending_reaps
+        with async_batch() as batch_pending_bytes:
+            for c in selected:
+                self.active_item = c.name
+                running = [a for a in c.requires_apps_closed if is_app_running(a)]
+                if running and not self.dry_run:
+                    self.log.append((f"⏭  {c.name:<22} skipped — {', '.join(running)} running", 3))
+                    self.clean_progress += 1
+                    continue
+                self.log.append((f"→  {c.name:<22} working…", 5))
+                try:
+                    freed, errs, msg = c.clean(self.dry_run)
+                except (OSError, subprocess.SubprocessError, RuntimeError) as e:
+                    self.log[-1] = (f"✗  {c.name:<22} error: {e}", 4)
+                    total_errs += 1
+                    self.clean_progress += 1
+                    continue
+                icon = "✓" if errs == 0 else "!"
+                color = 2 if errs == 0 else 3
+                size_str = human(freed) if freed else "—"
+                self.log[-1] = (f"{icon}  {c.name:<22} {size_str:>11}  {msg}", color)
+                total_freed += freed
+                total_errs += errs
                 self.clean_progress += 1
-                continue
-            self.log.append((f"→  {c.name:<22} working…", 5))
-            try:
-                freed, errs, msg = c.clean(self.dry_run)
-            except (OSError, subprocess.SubprocessError, RuntimeError) as e:
-                self.log[-1] = (f"✗  {c.name:<22} error: {e}", 4)
-                total_errs += 1
-                self.clean_progress += 1
-                continue
-            icon = "✓" if errs == 0 else "!"
-            color = 2 if errs == 0 else 3
-            size_str = human(freed) if freed else "—"
-            self.log[-1] = (f"{icon}  {c.name:<22} {size_str:>11}  {msg}", color)
-            total_freed += freed
-            total_errs += errs
-            self.clean_progress += 1
 
-        self.active_item = ""
-        self.log.append(("", 0))
-        label = "Would free" if self.dry_run else "Freed"
-        self.log.append((f"{label}: {human(total_freed)}    Errors: {total_errs}", 2))
+            self.active_item = ""
+            self.log.append(("", 0))
+            if self.dry_run:
+                self.log.append((f"Would free: {human(total_freed)}    Errors: {total_errs}", 2))
+            else:
+                # Wait briefly for *this batch's* reapers so the summary
+                # honestly distinguishes reclaimed from still-pending.
+                wait_for_pending_reaps(timeout=5.0)
+                pending = batch_pending_bytes()
+                actually_freed = max(0, total_freed - pending)
+                if pending > 0:
+                    self.log.append((
+                        f"Freed: {human(actually_freed)}    "
+                        f"({human(pending)} still finalizing in background)    "
+                        f"Errors: {total_errs}",
+                        2,
+                    ))
+                else:
+                    self.log.append((
+                        f"Freed: {human(total_freed)}    Errors: {total_errs}",
+                        2,
+                    ))
         self.mode = "done"
 
     def start_cache_scan(self):

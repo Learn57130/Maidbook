@@ -59,20 +59,37 @@ def run_cli(dry_run: bool, clean_all: bool) -> None:
 
     total_freed = 0
     total_errs = 0
-    for c in selected:
-        if c.requires_apps_closed and not dry_run:
-            if any(is_app_running(a) for a in c.requires_apps_closed):
-                print(f"  >>  {c.name}: app running, skipped")
+    # async_batch() scopes pending-byte accounting to *this* clean's
+    # trash subdirs only — orphans from a previous session that the
+    # startup reaper is still draining don't get charged here.
+    from .common import async_batch, wait_for_pending_reaps
+    with async_batch() as batch_pending_bytes:
+        for c in selected:
+            if c.requires_apps_closed and not dry_run:
+                if any(is_app_running(a) for a in c.requires_apps_closed):
+                    print(f"  >>  {c.name}: app running, skipped")
+                    continue
+            try:
+                freed, errs, msg = c.clean(dry_run)
+            except (OSError, subprocess.SubprocessError, RuntimeError) as e:
+                print(f"  !!  {c.name:<22} clean failed: {e}")
+                total_errs += 1
                 continue
-        try:
-            freed, errs, msg = c.clean(dry_run)
-        except (OSError, subprocess.SubprocessError, RuntimeError) as e:
-            print(f"  !!  {c.name:<22} clean failed: {e}")
-            total_errs += 1
-            continue
-        total_freed += freed
-        total_errs += errs
-        marker = "OK" if errs == 0 else "!!"
-        print(f"  {marker}  {c.name:<22} {human(freed):>10}  {msg}")
-    label = "Would free" if dry_run else "Freed"
-    print(f"\n  {label}: {human(total_freed)}    Errors: {total_errs}")
+            total_freed += freed
+            total_errs += errs
+            marker = "OK" if errs == 0 else "!!"
+            print(f"  {marker}  {c.name:<22} {human(freed):>10}  {msg}")
+        if dry_run:
+            print(f"\n  Would free: {human(total_freed)}    Errors: {total_errs}")
+        else:
+            wait_for_pending_reaps(timeout=5.0)
+            pending = batch_pending_bytes()
+            actually_freed = max(0, total_freed - pending)
+            if pending > 0:
+                print(
+                    f"\n  Freed: {human(actually_freed)}    "
+                    f"({human(pending)} still finalizing in background)    "
+                    f"Errors: {total_errs}"
+                )
+            else:
+                print(f"\n  Freed: {human(total_freed)}    Errors: {total_errs}")
