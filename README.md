@@ -1,8 +1,8 @@
 <p align="center">
-  <img src="assets/banner.png" alt="Maidbook — the tidy Mac keeper" width="100%" />
+  <img src="https://raw.githubusercontent.com/Learn57130/Maidbook/main/assets/banner.png" alt="Maidbook — the tidy Mac keeper" width="100%" />
 </p>
 
-# Maidbook <img src="assets/logo.png" align="right" width="120" />
+# Maidbook <img src="https://raw.githubusercontent.com/Learn57130/Maidbook/main/assets/logo.png" align="right" width="120" />
 
 A tidy cache cleaner + health check for macOS. Single-binary TUI, stdlib-only, no install bloat.
 
@@ -141,10 +141,19 @@ either add it or use `pip install -e .` for an editable dev install.
 
 ### From PyPI
 
+The fastest path — one line, no `git clone`:
+
 ```bash
-# coming later
-pip install maidbook
+pipx install maidbook
 ```
+
+Or, if you'd rather use plain pip:
+
+```bash
+pip install --user maidbook
+```
+
+To upgrade later: `pipx upgrade maidbook` (or `pip install -U --user maidbook`).
 
 ## Usage
 
@@ -239,7 +248,7 @@ findings. Nothing crashes; nothing pesters you to install anything.
 
 Linux is not a target — several checks (XProtect, `codesign`, `xattr`, `pbcopy`) are macOS-specific.
 
-## Roadmap — v0.2 planned
+## Roadmap — v0.3 planned
 
 A lean list of what's next. Order is priority-ish, not strict.
 
