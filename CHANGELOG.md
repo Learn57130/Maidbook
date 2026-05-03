@@ -4,7 +4,69 @@ All notable changes to Maidbook. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/), versioning per
 [SemVer](https://semver.org/).
 
-## [Unreleased] — v0.2 planned
+## [0.2.0] — 2026-05-03
+
+The "fast clean + reachable on PyPI" release. First minor bump out of the
+v0.1.x patch line — async deletion is a real behavioral change, big enough
+to earn the version increment, and the same release ships Maidbook to PyPI
+for one-line install.
+
+### Added
+
+- **Async deletion via mv-then-rmtree.** Cache directory deletion now
+  renames the tree into `~/.maidbook/trash/<unique>/` (instant on APFS
+  regardless of subtree size — single inode metadata update) and lets a
+  background daemon thread `shutil.rmtree` the trash subdir at its own
+  pace. Returns to the caller in milliseconds, eliminating the multi-
+  second TUI freeze previously seen on big trees like `~/.cache` or
+  Xcode `DerivedData`. Synthetic 5,000-file benchmark: **~20× perceived
+  speedup** (302 ms → 15 ms). Falls back to synchronous `rm_path` if the
+  rename fails (cross-filesystem, permission denied) so the v0.1.1
+  honesty contract holds end-to-end.
+- **Per-batch trash accounting.** New `common.async_batch()` context
+  manager scopes "still pending in trash" measurement to *this* clean's
+  trash subdirs, not the aggregate. Without this, a startup-reap of
+  prior-session orphans would get charged against the current clean
+  and the summary could show `Freed: 0` despite reclaiming real space.
+- **Honest "freed vs scheduled" reporting.** Post-clean summary shows
+  one of `Freed: X` (reapers finished within 5 s wait) or `Freed: X
+  (Y still finalizing in background)` (mv'd to trash but rmtree
+  hasn't caught up). The user is never told space is freed when it's
+  only renamed.
+- **Self-healing orphan reap.** Force-quit during clean no longer
+  leaves a half-deleted tree — the `mv` is atomic, and a daemon-thread
+  reap at next startup clears anything the previous session's exit-wait
+  didn't catch. Async-spawned at startup so it cannot freeze the UI.
+- **Available on PyPI.** `pipx install maidbook` or `pip install
+  --user maidbook` — no more `git clone` required.
+
+### Changed
+
+- Modernized `pyproject.toml` to PEP 639 license metadata
+  (`license = "MIT"` + `license-files = ["LICENSE"]`, dropped the
+  redundant `License ::` classifier).
+- README banner / logo `<img>` URLs switched to absolute GitHub raw
+  URLs so they render correctly on the PyPI project page.
+- `[project.urls]` adds `Source` alongside `Homepage` / `Issues` /
+  `Changelog` for richer PyPI sidebar.
+
+### Tests
+
+51/51 passing (was 37 at end of v0.1.2). 14 new tests for async
+deletion + per-batch accounting + lifecycle hooks. Live synthetic
+benchmark + real TUI test against actual caches both verified in
+the v0.2/async-deletion PR (#8) before merge.
+
+### Workflow note
+
+Three rounds of PR review on the async-deletion branch caught two real
+behavioral regressions (P1 over-reporting freed bytes, P2 startup hang)
+plus a third compositional bug (per-batch vs aggregate accounting).
+Each fix shipped on the same branch with a named regression test in the
+same commit. The "comments are the API" pattern from
+[[AI code review iteration loop with PRs]] played out exactly as designed.
+
+## [Unreleased] — v0.3 planned
 
 ### Planned
 
@@ -20,8 +82,9 @@ All notable changes to Maidbook. Format loosely follows
 - Post-action reporting — cron summary logs for full transparency.
 - ASCII mascot integration — reactive minimalist mascot in the TUI that
   changes state based on system cleanliness.
-- Async deletion (mv-then-rmtree) for ~50–100× perceived cleanup speed.
-- Graceful Ctrl+C during clean (threading.Event stop signal).
+- Graceful Ctrl+C during clean (threading.Event stop signal). v0.2 only
+  addressed the force-quit-leaves-orphans half via the startup reap;
+  in-flight Ctrl+C still kills the worker mid-mv.
 - Within-category progress (current path / file count) during cleanup.
 - Vim-style end-of-list (`G` / `gg`) and selection wrap-around.
 - AI-agent skill audit (`scan_skills` health module) — read-only audit of
