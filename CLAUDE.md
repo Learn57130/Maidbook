@@ -148,10 +148,23 @@ either path. Files and symlinks always go through `rm_path` — there's no
 perceived-speed gain from deferring a single `unlink`.
 
 **Lifecycle hooks** in `__main__.py`:
-- `reap_pending_trash()` runs at startup to clean up any orphans left
-  by a previous session crash / force-quit.
+- `reap_pending_trash_async()` runs at startup in a daemon thread to
+  clean up any orphans left by a previous session crash / force-quit.
+  **Must NOT be made synchronous** — a 5 GB orphan tree would freeze
+  the UI for tens of seconds before any rendering, defeating the whole
+  point of async deletion.
 - `wait_for_pending_reaps(timeout=2.0)` runs at exit so small cleans
   finish in-session; bigger ones are left for the next-startup reap.
+
+**Honesty contract for the post-clean summary:** the TUI / CLI clean
+summary calls `wait_for_pending_reaps(timeout=5.0)` which returns
+`(threads_alive, bytes_pending_in_trash)`. The summary distinguishes:
+- `Freed: X` — pending == 0, reapers finished within the wait
+- `Freed: X (Y still finalizing in background)` — pending > 0, mv'd to
+  trash but rmtree hasn't caught up yet
+
+Never claim space as freed when it's only mv'd to trash. The bytes are
+still on disk; they just have a different name.
 
 **Don't switch the cleaners back to `rm_path`** for browser / `~/.cache` /
 DerivedData paths — they're the exact case async was built for.

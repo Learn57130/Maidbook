@@ -66,6 +66,10 @@ def test_rm_path(tmp_path):
 def _wait_for_reapers():
     """Block until any in-flight reaper threads finish (test hygiene)."""
     common.wait_for_pending_reaps(timeout=5.0)
+    # Belt-and-braces: prune the global list so cross-test residue doesn't
+    # accumulate.
+    with common._REAPER_LOCK:
+        common._REAPER_THREADS[:] = [t for t in common._REAPER_THREADS if t.is_alive()]
 
 
 def test_rm_path_async_directory_moves_to_trash(tmp_path, monkeypatch):
@@ -160,6 +164,108 @@ def test_reap_pending_trash_no_trash_dir_is_no_op(tmp_path, monkeypatch):
     monkeypatch.setattr(common, "TRASH_BASE", tmp_path / "never_created")
 
     assert common.reap_pending_trash() == 0
+
+
+def test_reap_pending_trash_async_does_not_block(tmp_path, monkeypatch):
+    """[P2 regression] Startup orphan-reap must NOT block the caller.
+
+    Pre-populate trash with leftover dirs and verify reap_pending_trash_async
+    returns essentially instantly (well under the actual rmtree cost). The
+    daemon thread continues in the background; the call site (main()) should
+    be free to start the UI immediately.
+    """
+    import time as _time
+    trash_root = tmp_path / ".trash"
+    monkeypatch.setattr(common, "TRASH_BASE", trash_root)
+    trash_root.mkdir()
+
+    # Build a few orphan subdirs with enough files to make a sync rmtree
+    # measurably slow.
+    for i in range(3):
+        sub = trash_root / f"orphan-{i}"
+        sub.mkdir()
+        for j in range(200):
+            (sub / f"f_{j:03d}.bin").write_bytes(b"x" * 64)
+
+    t0 = _time.monotonic()
+    thread = common.reap_pending_trash_async()
+    elapsed = _time.monotonic() - t0
+
+    assert thread is not None, "should return a thread when trash exists"
+    assert elapsed < 0.05, (
+        f"async reap took {elapsed*1000:.0f}ms — must return immediately, "
+        "the whole point is to not block startup"
+    )
+
+    # Verify it eventually does the work
+    thread.join(timeout=10.0)
+    assert not thread.is_alive(), "background reaper should finish in reasonable time"
+    remaining = [p for p in trash_root.iterdir() if p.is_dir()]
+    assert remaining == [], "background reaper should clear orphans like the sync version"
+
+
+def test_reap_pending_trash_async_no_trash_dir_returns_none(tmp_path, monkeypatch):
+    """When there's nothing to reap (clean install), don't even spawn a
+    thread — just return None so callers can skip the work entirely."""
+    monkeypatch.setattr(common, "TRASH_BASE", tmp_path / "never_created")
+
+    assert common.reap_pending_trash_async() is None
+
+
+def test_wait_for_pending_reaps_reports_pending_bytes(tmp_path, monkeypatch):
+    """[P1 regression] wait_for_pending_reaps must surface bytes-still-in-trash
+    so the post-clean summary can honestly distinguish "freed" from
+    "scheduled for deletion".
+    """
+    trash_root = tmp_path / ".trash"
+    monkeypatch.setattr(common, "TRASH_BASE", trash_root)
+    trash_root.mkdir()
+
+    # Simulate a clean that mv'd content into trash but the reaper hasn't
+    # touched it yet.
+    leftover = trash_root / "still_pending"
+    leftover.mkdir()
+    (leftover / "data.bin").write_bytes(b"x" * 1024)
+
+    # No reaper threads scheduled; wait should return immediately and report
+    # the bytes that are *still on disk*.
+    alive, pending = common.wait_for_pending_reaps(timeout=0.1)
+
+    assert alive == 0, "no in-flight reapers should be running"
+    assert pending > 0, (
+        "must report pending bytes when content is sitting in trash — "
+        "this is the honesty-contract fix for the over-reporting bug"
+    )
+
+
+def test_wait_for_pending_reaps_zero_pending_when_trash_empty(tmp_path, monkeypatch):
+    """When the reaper finished and the trash is empty, pending must be 0
+    so callers can render the simple "Freed: X" message."""
+    trash_root = tmp_path / ".trash"
+    monkeypatch.setattr(common, "TRASH_BASE", trash_root)
+    trash_root.mkdir()
+
+    alive, pending = common.wait_for_pending_reaps(timeout=0.1)
+
+    assert alive == 0
+    assert pending == 0
+
+
+def test_trash_pending_bytes_reflects_disk(tmp_path, monkeypatch):
+    """trash_pending_bytes is what powers the 'still finalizing' UI hint;
+    ensure it tracks what's actually on disk."""
+    trash_root = tmp_path / ".trash"
+    monkeypatch.setattr(common, "TRASH_BASE", trash_root)
+
+    # No trash dir -> 0
+    assert common.trash_pending_bytes() == 0
+
+    # Create some content -> non-zero (du gives block-rounded, just check >0)
+    trash_root.mkdir()
+    sub = trash_root / "queued"
+    sub.mkdir()
+    (sub / "f.bin").write_bytes(b"x" * 4096)
+    assert common.trash_pending_bytes() > 0
 
 
 @patch("subprocess.run")

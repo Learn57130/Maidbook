@@ -266,12 +266,24 @@ def rm_path_async(p: Path) -> tuple[int, int]:
     return size_before, 0
 
 
-def reap_pending_trash() -> int:
-    """Remove any leftover trash subdirs from prior sessions.
+def trash_pending_bytes() -> int:
+    """Total disk usage currently sitting in :data:`TRASH_BASE`.
 
-    Returns the number of subdirs reaped. Intended to be called once at
-    startup so a crash or force-quit during a previous clean doesn't leave
-    space unreclaimed indefinitely.
+    Used by the post-clean summary to honestly distinguish between bytes
+    that were actually reclaimed and bytes that have been renamed into
+    the trash but not yet ``rmtree``'d by the background reaper.
+    """
+    if not TRASH_BASE.exists():
+        return 0
+    return path_size(TRASH_BASE)
+
+
+def reap_pending_trash() -> int:
+    """Remove any leftover trash subdirs from prior sessions, synchronously.
+
+    Returns the number of subdirs reaped. Caller is responsible for
+    deciding whether to invoke this directly (small leftover, fast) or via
+    :func:`reap_pending_trash_async` so it doesn't block UI startup.
     """
     if not TRASH_BASE.exists():
         return 0
@@ -291,12 +303,46 @@ def reap_pending_trash() -> int:
     return count
 
 
-def wait_for_pending_reaps(timeout: float = 2.0) -> int:
+def reap_pending_trash_async() -> threading.Thread | None:
+    """Spawn a daemon thread that reaps leftover trash from prior sessions.
+
+    Returns the thread (so callers / tests can introspect) or ``None`` if
+    the trash dir doesn't exist yet (clean install, common case — cheap
+    to skip).
+
+    Intended to be called once at app startup. The previous synchronous
+    version of this call could freeze the app for tens of seconds before
+    any UI rendered, in the exact failure mode async deletion was meant
+    to fix. By going through a daemon thread, the UI renders immediately
+    and the reap continues in the background; if the user quits before
+    it finishes, next startup tries again.
+    """
+    if not TRASH_BASE.exists():
+        return None
+    t = threading.Thread(
+        target=reap_pending_trash,
+        name="maidbook-startup-reaper", daemon=True,
+    )
+    t.start()
+    with _REAPER_LOCK:
+        _REAPER_THREADS.append(t)
+    return t
+
+
+def wait_for_pending_reaps(timeout: float = 2.0) -> tuple[int, int]:
     """Wait briefly for in-flight background reapers to finish.
 
-    Returns the number of reapers still running after the timeout. Intended
-    to be called at app exit so small cleans finish synchronously while big
-    ones are left for the next-startup reaper.
+    Returns ``(threads_still_alive, bytes_still_in_trash)``:
+
+    - ``threads_still_alive`` — number of background reapers that did NOT
+      finish within ``timeout``.
+    - ``bytes_still_in_trash`` — disk usage of :data:`TRASH_BASE` after
+      the wait. Used by the clean summary to honestly distinguish between
+      "freed" and "scheduled but not yet finalized".
+
+    Intended to be called once after a batch of cleans (and again at exit)
+    so small cleans complete in-session and the user sees an honest report
+    of what was actually reclaimed vs what's still pending.
     """
     deadline = time.monotonic() + timeout
     with _REAPER_LOCK:
@@ -306,7 +352,11 @@ def wait_for_pending_reaps(timeout: float = 2.0) -> int:
         t.join(timeout=remaining)
     with _REAPER_LOCK:
         still_alive = sum(1 for t in _REAPER_THREADS if t.is_alive())
-    return still_alive
+        # Prune dead threads so the list doesn't grow unbounded over a
+        # long session (one of the things a careful reviewer was right
+        # to flag).
+        _REAPER_THREADS[:] = [t for t in _REAPER_THREADS if t.is_alive()]
+    return still_alive, trash_pending_bytes()
 
 
 # ---------------------------------------------------------------------------

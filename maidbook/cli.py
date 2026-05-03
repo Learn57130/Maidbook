@@ -74,5 +74,20 @@ def run_cli(dry_run: bool, clean_all: bool) -> None:
         total_errs += errs
         marker = "OK" if errs == 0 else "!!"
         print(f"  {marker}  {c.name:<22} {human(freed):>10}  {msg}")
-    label = "Would free" if dry_run else "Freed"
-    print(f"\n  {label}: {human(total_freed)}    Errors: {total_errs}")
+    if dry_run:
+        print(f"\n  Would free: {human(total_freed)}    Errors: {total_errs}")
+    else:
+        # Wait briefly for background reapers so the summary honestly
+        # distinguishes "actually reclaimed" from "moved to trash but not
+        # yet finalized" (see TUI comment for the same logic).
+        from .common import wait_for_pending_reaps
+        _alive, pending = wait_for_pending_reaps(timeout=5.0)
+        actually_freed = max(0, total_freed - pending)
+        if pending > 0:
+            print(
+                f"\n  Freed: {human(actually_freed)}    "
+                f"({human(pending)} still finalizing in background)    "
+                f"Errors: {total_errs}"
+            )
+        else:
+            print(f"\n  Freed: {human(total_freed)}    Errors: {total_errs}")

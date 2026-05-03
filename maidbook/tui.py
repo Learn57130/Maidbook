@@ -204,8 +204,29 @@ class TUI:
 
         self.active_item = ""
         self.log.append(("", 0))
-        label = "Would free" if self.dry_run else "Freed"
-        self.log.append((f"{label}: {human(total_freed)}    Errors: {total_errs}", 2))
+        if self.dry_run:
+            self.log.append((f"Would free: {human(total_freed)}    Errors: {total_errs}", 2))
+        else:
+            # Wait briefly for background reapers so the final summary
+            # honestly distinguishes "actually reclaimed" from "moved to
+            # trash but not yet finalized". Without this wait, async
+            # deletion would over-report freed bytes — disk free space
+            # wouldn't reflect the claim until the reapers caught up.
+            from .common import wait_for_pending_reaps
+            _alive, pending = wait_for_pending_reaps(timeout=5.0)
+            actually_freed = max(0, total_freed - pending)
+            if pending > 0:
+                self.log.append((
+                    f"Freed: {human(actually_freed)}    "
+                    f"({human(pending)} still finalizing in background)    "
+                    f"Errors: {total_errs}",
+                    2,
+                ))
+            else:
+                self.log.append((
+                    f"Freed: {human(total_freed)}    Errors: {total_errs}",
+                    2,
+                ))
         self.mode = "done"
 
     def start_cache_scan(self):
