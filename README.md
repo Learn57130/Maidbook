@@ -293,3 +293,109 @@ MIT. See [LICENSE](./LICENSE).
 ## Acknowledgments
 
 UI aesthetic borrowed from Claude Code — the rounded cards, braille spinner, and restrained amber palette.
+
+
+## Changelog
+
+### [Minor Change] 2026-05-15 22:29
+
+Files modified:
+- `maidbook/tui.py`
+
+Diff:  14 files changed, 2387 insertions(+), 95 deletions(-)
+
+---
+
+### [Minor Change] 2026-05-15 22:28
+
+Files modified:
+- `maidbook/tui.py`
+
+Diff:  14 files changed, 2392 insertions(+), 95 deletions(-)
+
+---
+
+### [Minor Change] 2026-05-15 22:25
+
+Files modified:
+- `maidbook/cli.py`
+- `maidbook/tui.py`
+
+Diff:  14 files changed, 2396 insertions(+), 95 deletions(-)
+
+---
+
+### [Minor Change] 2026-05-15 22:22
+
+Files modified:
+- `maidbook/cli.py`
+- `maidbook/tui.py`
+
+Diff:  14 files changed, 2369 insertions(+), 95 deletions(-)
+
+---
+
+### [Minor Change] 2026-05-15 22:11
+
+Files modified:
+- `maidbook/tui.py`
+
+Diff:  14 files changed, 2349 insertions(+), 95 deletions(-)
+
+---
+
+### [Minor Change] 2026-05-15 15:18
+
+Files modified:
+- `maidbook/tui.py`
+
+Diff:  14 files changed, 2348 insertions(+), 94 deletions(-)
+
+---
+
+### [Major Change] 2026-05-15 14:04
+
+Files modified:
+- `maidbook/cli.py`
+- `maidbook/common.py`
+- `maidbook/tui.py`
+- `tests/test_cli.py`
+- `tests/test_common.py`
+
+Diff:  14 files changed, 2472 insertions(+), 94 deletions(-)
+
+---
+
+### [Minor Change] 2026-05-15 13:57
+
+Files modified:
+- `maidbook/__main__.py`
+- `maidbook/cli.py`
+- `tests/test_cli.py`
+
+Diff:  14 files changed, 2371 insertions(+), 94 deletions(-)
+
+---
+
+### [Major Change] 2026-05-15 13:45
+
+Files modified:
+- `maidbook/cli.py`
+- `maidbook/common.py`
+- `maidbook/tui.py`
+- `tests/test_common.py`
+
+Diff:  14 files changed, 2368 insertions(+), 94 deletions(-)
+
+---
+
+### [Minor Change] 2026-05-15 13:33
+
+Files modified:
+- `maidbook/cli.py`
+- `maidbook/tui.py`
+
+Diff:  14 files changed, 2178 insertions(+), 93 deletions(-)
+
+---
+

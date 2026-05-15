@@ -1,6 +1,7 @@
 """Cache categories: pip / npm / brew, browser caches, XDG ~/.cache,
-Xcode DerivedData, a curated ``SAFE_CACHE_ITEMS`` list, plus auto-discovery
-of whatever else is sitting in ``~/Library/Caches``.
+Xcode DerivedData, dev build artifacts, a curated ``SAFE_CACHE_ITEMS``
+list, plus auto-discovery of whatever else is sitting in
+``~/Library/Caches``.
 
 Each :class:`Category` has:
   * a ``scan`` function returning ``(bytes, file_count, dir_count)``
@@ -277,6 +278,129 @@ def clean_xcode(dry: bool) -> tuple[int, int, str]:
 
 
 # ---------------------------------------------------------------------------
+# Dev build artifacts — node_modules, target/, venv, __pycache__, etc.
+# ---------------------------------------------------------------------------
+
+ARTIFACT_SCAN_ROOTS = [
+    HOME / "Developer",
+    HOME / "Projects",
+    HOME / "repos",
+    HOME / "code",
+    HOME / "Desktop",
+    HOME / "Documents",
+]
+
+_ARTIFACT_NAMES = frozenset({
+    "node_modules", "target", ".build", "venv", ".venv", "__pycache__",
+})
+
+_ARTIFACT_NEED_SIBLING = frozenset({"build", "dist"})
+
+_PROJECT_MARKERS = frozenset({
+    "package.json", "setup.py", "pyproject.toml", "Cargo.toml",
+    "build.gradle", "pom.xml", "Makefile", "CMakeLists.txt",
+})
+
+_ARTIFACT_LABELS: dict[str, tuple[str, str]] = {
+    "node_modules": ("npm/yarn install artifacts", "caution"),
+    "target":       ("Rust/Java/Scala build output", "caution"),
+    ".build":       ("Swift Package Manager build", "caution"),
+    "build":        ("Build output", "caution"),
+    "dist":         ("Distribution output", "caution"),
+    "venv":         ("Python virtual environment", "caution"),
+    ".venv":        ("Python virtual environment", "caution"),
+    "__pycache__":  ("Python bytecode cache", "safe"),
+}
+
+_MAX_ARTIFACT_DEPTH = 5
+_MAX_ARTIFACTS = 200
+
+
+def discover_dev_artifacts(
+    roots: list[Path] | None = None,
+) -> list[tuple[str, Path, str, str]]:
+    """Walk project roots and find dev build artifact directories.
+
+    Returns ``(artifact_type, path, description, safety)`` for each hit.
+    Skips projects containing a ``.maidbook-keep`` sentinel.
+    """
+    if roots is None:
+        roots = ARTIFACT_SCAN_ROOTS
+    found: list[tuple[str, Path, str, str]] = []
+
+    def _has_project_marker(parent: Path) -> bool:
+        try:
+            return any((parent / m).exists() for m in _PROJECT_MARKERS)
+        except OSError:
+            return False
+
+    for root in roots:
+        if not root.is_dir():
+            continue
+        try:
+            _walk_for_artifacts(root, found, 0, _has_project_marker)
+        except OSError:
+            continue
+        if len(found) >= _MAX_ARTIFACTS:
+            break
+    return found[:_MAX_ARTIFACTS]
+
+
+def _walk_for_artifacts(
+    directory: Path,
+    found: list[tuple[str, Path, str, str]],
+    depth: int,
+    has_marker: callable,
+) -> None:
+    if depth > _MAX_ARTIFACT_DEPTH or len(found) >= _MAX_ARTIFACTS:
+        return
+    if (directory / ".maidbook-keep").exists():
+        return
+    try:
+        entries = list(directory.iterdir())
+    except (OSError, PermissionError):
+        return
+    subdirs: list[Path] = []
+    for entry in entries:
+        if not entry.is_dir() or entry.is_symlink():
+            continue
+        name = entry.name
+        if name.startswith(".") and name not in (".build", ".venv"):
+            continue
+        if name in _ARTIFACT_NAMES:
+            desc, safety = _ARTIFACT_LABELS.get(name, ("build artifact", "caution"))
+            project = directory.name
+            found.append((name, entry, f"{project}/{name} — {desc}", safety))
+            continue
+        if name in _ARTIFACT_NEED_SIBLING:
+            if has_marker(directory):
+                desc, safety = _ARTIFACT_LABELS.get(name, ("build artifact", "caution"))
+                project = directory.name
+                found.append((name, entry, f"{project}/{name} — {desc}", safety))
+                continue
+        subdirs.append(entry)
+    for sub in subdirs:
+        if sub.name in _ARTIFACT_NAMES or sub.name in _ARTIFACT_NEED_SIBLING:
+            continue
+        _walk_for_artifacts(sub, found, depth + 1, has_marker)
+
+
+def make_artifact_cleaner(path: Path):
+    def scan() -> int:
+        return path_size(path)
+
+    def clean(dry: bool) -> tuple[int, int, str]:
+        if not path.exists():
+            return 0, 0, "already gone"
+        if dry:
+            return path_size(path), 0, "would remove"
+        s, e = rm_path_async(path)
+        return s, e, "removed" if e == 0 else f"errors: {e}"
+
+    return scan, clean
+
+
+# ---------------------------------------------------------------------------
 # Auto-discovery of uncovered ~/Library/Caches/* folders
 # ---------------------------------------------------------------------------
 
@@ -372,6 +496,21 @@ def build_categories() -> list[Category]:
             safety="safe",
             safety_note="cookies, history, logins preserved",
             path_hint=fmt_path(HOME / rel),
+        ))
+    for atype, apath, adesc, asafety in discover_dev_artifacts():
+        scan_fn, clean_fn = make_artifact_cleaner(apath)
+        note = "rebuilds on next install/build" if asafety == "caution" else "regenerated automatically"
+        cats.append(Category(
+            key=f"artifact-{apath.parent.name}-{atype}",
+            name=f"{apath.parent.name}/{atype}",
+            icon=">>",
+            description=adesc,
+            scan=scan_fn,
+            clean=clean_fn,
+            tags={"dev-artifacts"},
+            safety=asafety,
+            safety_note=note,
+            path_hint=fmt_path(apath),
         ))
     for name, path in discover_other_caches():
         scan_fn, clean_fn = make_discovered_cleaner(path)

@@ -5,7 +5,7 @@ Public re-exports for programmatic use; most users will just run
 the argparse entry point.
 """
 
-__version__ = "0.2.0"
+__version__ = "0.3.0"
 
 from .common import APP_NAME, APP_TAGLINE
 

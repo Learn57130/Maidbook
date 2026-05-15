@@ -5,6 +5,9 @@ Usage:
   maidbook --cli        plain CLI (no curses)
   maidbook --dry-run    scan only, no deletion
   maidbook --all        (with --cli) clean every category — use with care
+  maidbook --cron       headless mode: clean all, JSON output, log to file
+  maidbook --history    print last 10 cleaning sessions
+  maidbook --stats      print lifetime statistics
 """
 
 from __future__ import annotations
@@ -14,7 +17,7 @@ import curses
 import sys
 
 from . import __version__
-from .cli import run_cli
+from .cli import run_cli, run_cron, show_history, show_stats, schedule_cron, unschedule_cron
 from .common import (
     APP_NAME, APP_TAGLINE,
     reap_pending_trash_async, wait_for_pending_reaps,
@@ -33,20 +36,44 @@ def main() -> int:
                    help="scan only, no deletion")
     p.add_argument("--all", action="store_true",
                    help="(with --cli) clean all categories")
+    p.add_argument("--cron", action="store_true",
+                   help="headless mode: clean all non-whitelisted categories, JSON output")
+    p.add_argument("--history", action="store_true",
+                   help="print last 10 cleaning sessions from cron logs")
+    p.add_argument("--stats", action="store_true",
+                   help="print lifetime cleaning statistics")
+    p.add_argument("--schedule", nargs="?", const="weekly",
+                   metavar="INTERVAL",
+                   help="install scheduled cron clean: daily or weekly (default: weekly)")
+    p.add_argument("--unschedule", action="store_true",
+                   help="remove the scheduled cron clean")
     p.add_argument("--version", action="version",
                    version=f"%(prog)s {__version__}")
     args = p.parse_args()
 
-    # Reap any leftover trash from a previous session, in the background.
-    # Cheap if the trash dir is empty (common case). Crucially, this MUST
-    # NOT block startup — if the previous session left a 5 GB tree behind,
-    # a synchronous rmtree here would freeze the UI for tens of seconds
-    # before either CLI or TUI rendered, defeating the whole point of
-    # async deletion. The daemon thread continues independently; if the
-    # user quits before it finishes, next startup tries again.
+    if args.unschedule:
+        unschedule_cron()
+        return 0
+
+    if args.schedule is not None:
+        schedule_cron(args.schedule)
+        return 0
+
+    if args.history:
+        show_history()
+        return 0
+
+    if args.stats:
+        show_stats()
+        return 0
+
     reap_pending_trash_async()
 
     try:
+        if args.cron:
+            run_cron(dry_run=args.dry_run)
+            return 0
+
         if args.cli:
             run_cli(dry_run=args.dry_run, clean_all=args.all)
             return 0
@@ -61,9 +88,6 @@ def main() -> int:
             run_cli(dry_run=args.dry_run, clean_all=args.all)
         return 0
     finally:
-        # Give in-flight background reapers a moment to finish so small
-        # cleans complete fully in-session. Anything still running gets
-        # picked up by reap_pending_trash_async() at next startup.
         wait_for_pending_reaps(timeout=2.0)
 
 

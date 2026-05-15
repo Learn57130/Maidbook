@@ -12,7 +12,8 @@ maidbook/
 │   ├── __main__.py        argparse entry, `maidbook` command
 │   ├── common.py          utilities, constants, glyphs — ZERO internal deps
 │   ├── cache.py           Category + all cache scanners/cleaners
-│   ├── health.py          Finding + HealthModule + 5 read-only scanners
+│   ├── health.py          Finding + HealthModule + 7 read-only scanners
+│   ├── agents.py          AI skill + MCP server discovery and management
 │   ├── tui.py             curses UI, TUI class, state machine
 │   └── cli.py             plain-text fallback for --cli
 ├── pyproject.toml         setuptools-based, stdlib-only runtime deps
@@ -28,8 +29,11 @@ maidbook/
 
 ```
 common  ←  cache   ←  tui  →  cli
-        ←  health  ←
+        ←  health  ←  agents  ←
+        ←  agents  ←
 ```
+
+i.e., `health` depends on `agents` (for `scan_skills` / `scan_mcp_configs`).
 
 `common.py` has no internal imports. If you add a helper, start there.
 
@@ -51,38 +55,51 @@ common  ←  cache   ←  tui  →  cli
              ┌──────────────────┐
    launch ──▶│       menu       │── q ──▶ exit
              └─────┬────────────┘
-                   │ ↵ pick "cache" | "health" | "both"
-         ┌─────────┼──────────────────────────┐
-         ▼         ▼                          ▼
-    ┌────────┐ ┌──────────┐             ┌──────────────┐
-    │ scan   │ │ scan     │             │ health_scan  │
-    │ (cache)│ │ (cache)  │             │              │
-    └───┬────┘ └───┬──────┘             └──────┬───────┘
-        │          │                           │ done
-        │ done     │ done                      ▼
-        ▼          ▼                    ┌──────────────────┐
-    ┌────────────────┐                  │ health_results   │
-    │    select      │                  │  ↵ rescan / m    │
-    │  ↵ confirm     │                  └──────────────────┘
-    └─────┬──────────┘
-          │ y
-          ▼
-    ┌────────────┐
-    │  confirm   │  ──── n ──▶  select
-    └─────┬──────┘
-          │ y
-          ▼
-    ┌────────────┐
-    │   clean    │──── worker finishes ──▶ done
-    └────────────┘                            │
-                                              │ plan=="both" → health_scan
-                                              │ else        → select (via ↵)
-                                              ▼
-                                          (loops)
+                   │ ↵ pick "cache" | "health" | "both" | "agents" | "stats" | "schedule"
+       ┌───────────┼────────────────┬──────────────┬──────────┬───────────┐
+       ▼           ▼                ▼              ▼          ▼           ▼
+  ┌────────┐  ┌──────────┐   ┌──────────────┐ ┌────────┐ ┌─────────┐ ┌──────────┐
+  │ scan   │  │ scan     │   │ health_scan  │ │agents_ │ │  stats  │ │ schedule │
+  │ (cache)│  │ (cache)  │   │              │ │  scan  │ │ (leaf)  │ │  (leaf,  │
+  └───┬────┘  └───┬──────┘   └──────┬───────┘ └────┬───┘ │  m·q)   │ │ Manage)  │
+      │           │                 │ done         │ done└─────────┘ └──────────┘
+      │ done      │ done            ▼              ▼
+      ▼           ▼          ┌────────────────┐ ┌──────────────┐
+  ┌────────────────┐         │ health_results │ │agents_browse │
+  │    select      │         │  ↵ rescan / m  │ │ x/r/m        │
+  │  space toggle  │         └────────────────┘ └──────────────┘
+  │  ↵ confirm     │
+  └────────┬───────┘
+           │ ↵
+           ▼
+   ┌────────────────┐
+   │ action_choice  │  ── n/Esc ──▶ select  ── q ──▶ exit
+   │  Clean now     │
+   │  Schedule …    │
+   └──┬─────────┬───┘
+   Clean now │  Schedule clean (overlay sub-states inside action_choice):
+      │      │     • schedule_picking      — pick "daily" / "weekly"
+      │      │     • schedule_time_picking — pick HH / MM
+      │      │     ↵ install → calls schedule_cron(), back to "menu"
+      ▼      │
+   ┌────────────┐
+   │  confirm   │ ── n/Esc ──▶ select   ── q ──▶ exit
+   └─────┬──────┘
+         │ y
+         ▼
+   ┌────────────┐  q/Esc ──▶ stop_requested.set()
+   │   clean    │──── worker finishes ──▶ done
+   └────────────┘                            │
+                                             │ plan=="both" → health_scan
+                                             │ else        → select (via ↵)
+                                             ▼
+                                         (loops)
 ```
 
 Mode lives in `TUI.mode`. Every keypress handler checks `self.mode` first and
-`continue`s out so draw logic stays isolated.
+`continue`s out so draw logic stays isolated. The `schedule_picking` and
+`schedule_time_picking` flags are overlay flags read while `mode ==
+"action_choice"` — not separate top-level modes.
 
 ## Adding a new cache category
 
@@ -100,11 +117,31 @@ Mode lives in `TUI.mode`. Every keypress handler checks `self.mode` first and
    optional remediation, optional path.
 2. Add a `HealthModule(key, name, description, scan_<thing>)` to the
    `HEALTH_MODULES` list.
-3. The TUI scans modules concurrently (max 5 workers). Keep your scanner
+3. The TUI scans modules concurrently (min(5, len(HEALTH_MODULES)) workers —
+   currently 5 of 7 modules run in parallel). Keep your scanner
    **read-only**. If you need to shell out, use `_run_quiet` and handle
    `rc == 127` (command not found) gracefully.
 4. Findings sort automatically by severity. Missing tools should be `info`,
    not `caution`.
+
+## Agent skill + MCP management
+
+`agents.py` discovers AI agent infrastructure across Claude Code, Codex,
+and Gemini. It provides:
+
+- **`discover_skills()`** — walks `~/.claude/skills/`, `~/.codex/skills/`,
+  `~/.gemini/` and returns `SkillEntry` objects with status (ok, broken_symlink,
+  orphan, suspicious).
+- **`discover_mcp_servers()`** — parses MCP config files (`~/.claude/mcp.json`,
+  Claude Desktop config, `~/.gemini/settings.json`) and returns `McpServerEntry`
+  objects with command validation.
+- **`remove_skill()` / `remove_mcp_server()`** — management actions, only called
+  from TUI after explicit `x` + `y` confirmation. `remove_mcp_server` edits the
+  JSON config to remove the entry.
+
+The TUI "Agent tools" menu item enters `agents_scan → agents_browse`.
+Health modules `scan_skills` and `scan_mcp_configs` delegate to `agents.py`
+for discovery and convert results to `Finding` objects.
 
 ## Curses gotchas (don't re-learn these)
 
@@ -174,13 +211,14 @@ DerivedData paths — they're the exact case async was built for.
 Pytest suite under `tests/`, organised by surface:
 
 - `test_common.py` — utility helpers (`human`, `fmt_path`, `path_size`,
-  `rm_path`, `is_app_running`)
+  `rm_path`, `is_app_running`), whitelist, stats
 - `test_cache.py` — Category scanners + cleaners (pip, brew, browsers,
-  discovery)
+  discovery, build artifacts)
 - `test_health.py` — Finding scanners (xprotect, malware, quarantine,
-  vulnerabilities)
-- `test_cli.py` — argparse plumbing + the TUI scan-worker exception
-  isolation contract
+  vulnerabilities, skills, MCP configs)
+- `test_agents.py` — skill discovery, MCP server discovery, removal actions
+- `test_cli.py` — argparse plumbing, TUI scan-worker exception isolation,
+  cron mode, history, stats
 - `test_integration.py` — argparse mode dispatch
 - `test_security.py` — hardening regressions (path-injection, symlink
   semantics, partial-deletion honesty, redaction, severity classes)
@@ -202,7 +240,7 @@ pip install ".[test]"
 python -m pytest tests/ -v
 ```
 
-Currently 37/37 passing as of v0.1.2. When you fix a bug, add a test that
+Currently 110/110 passing as of v0.3.0. When you fix a bug, add a test that
 locks in the regression in the same commit — the v0.1.1 / v0.1.2 patches
 each shipped with named regression tests, and that's the standard.
 
@@ -229,29 +267,105 @@ unexpected, surface it — don't hide it behind a `safe` tag.
 
 ## Recent Changes
 
-### [Minor Change] 2026-05-01 22:06
+### [Minor Change] 2026-05-15 22:29
 
 Files modified:
-- `README.md`
+- `maidbook/tui.py`
 
-Diff:  1 file changed, 21 insertions(+)
+Diff:  14 files changed, 2387 insertions(+), 95 deletions(-)
 
 ---
 
-### [Minor Change] 2026-04-30 20:02
+### [Minor Change] 2026-05-15 22:28
 
 Files modified:
-- `README.md`
+- `maidbook/tui.py`
 
-Diff:  1 file changed, 12 insertions(+)
+Diff:  14 files changed, 2392 insertions(+), 95 deletions(-)
 
 ---
 
-### [Minor Change] 2026-04-30 01:18
+### [Minor Change] 2026-05-15 22:25
 
 Files modified:
-- `CLAUDE.md`
+- `maidbook/cli.py`
+- `maidbook/tui.py`
 
-Diff:  1 file changed, 21 insertions(+)
+Diff:  14 files changed, 2396 insertions(+), 95 deletions(-)
 
 ---
+
+### [Minor Change] 2026-05-15 22:22
+
+Files modified:
+- `maidbook/cli.py`
+- `maidbook/tui.py`
+
+Diff:  14 files changed, 2369 insertions(+), 95 deletions(-)
+
+---
+
+### [Minor Change] 2026-05-15 22:11
+
+Files modified:
+- `maidbook/tui.py`
+
+Diff:  14 files changed, 2349 insertions(+), 95 deletions(-)
+
+---
+
+### [Minor Change] 2026-05-15 15:18
+
+Files modified:
+- `maidbook/tui.py`
+
+Diff:  14 files changed, 2348 insertions(+), 94 deletions(-)
+
+---
+
+### [Major Change] 2026-05-15 14:04
+
+Files modified:
+- `maidbook/cli.py`
+- `maidbook/common.py`
+- `maidbook/tui.py`
+- `tests/test_cli.py`
+- `tests/test_common.py`
+
+Diff:  14 files changed, 2472 insertions(+), 94 deletions(-)
+
+---
+
+### [Minor Change] 2026-05-15 13:57
+
+Files modified:
+- `maidbook/__main__.py`
+- `maidbook/cli.py`
+- `tests/test_cli.py`
+
+Diff:  14 files changed, 2371 insertions(+), 94 deletions(-)
+
+---
+
+### [Major Change] 2026-05-15 13:45
+
+Files modified:
+- `maidbook/cli.py`
+- `maidbook/common.py`
+- `maidbook/tui.py`
+- `tests/test_common.py`
+
+Diff:  14 files changed, 2368 insertions(+), 94 deletions(-)
+
+---
+
+### [Minor Change] 2026-05-15 13:33
+
+Files modified:
+- `maidbook/cli.py`
+- `maidbook/tui.py`
+
+Diff:  14 files changed, 2178 insertions(+), 93 deletions(-)
+
+---
+

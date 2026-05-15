@@ -437,6 +437,112 @@ def scan_vulnerabilities() -> list[Finding]:
     return out
 
 
+def scan_skills(
+    skill_dirs: list[Path] | None = None,
+) -> list[Finding]:
+    """Scan AI-agent skill directories for broken symlinks, orphan files,
+    and suspicious shell hooks.  Delegates to :mod:`agents` for discovery."""
+    from .agents import discover_skills, _SKILL_LOCATIONS
+
+    locations = (
+        [("test", d) for d in skill_dirs]
+        if skill_dirs is not None
+        else _SKILL_LOCATIONS
+    )
+    skills = discover_skills(locations)
+    out: list[Finding] = []
+
+    if not skills and skill_dirs is not None:
+        all_missing = all(not d.exists() for d in skill_dirs)
+        if all_missing:
+            out.append(Finding(
+                "skills", "ok", "No AI skill directories found",
+                "checked ~/.claude/skills, ~/.codex/skills, ~/.gemini",
+            ))
+            return out
+
+    for s in skills:
+        if s.status == "broken_symlink":
+            out.append(Finding(
+                "skills", "caution",
+                f"Broken symlink: {s.name}",
+                s.detail,
+                remediation="Remove or re-link the broken symlink",
+                path=str(s.path),
+            ))
+        elif s.status == "orphan":
+            out.append(Finding(
+                "skills", "info",
+                f"Orphan {s.name} in {s.path.parent.name}",
+                s.detail,
+                path=str(s.path),
+            ))
+        elif s.status == "suspicious":
+            out.append(Finding(
+                "skills", "review",
+                f"Suspicious hook in {s.name}/SKILL.md",
+                f"{s.detail} — verify intent",
+                remediation="Review the SKILL.md for unexpected shell commands",
+                path=str(s.path / "SKILL.md"),
+            ))
+
+    if not out:
+        n = len(skills)
+        out.append(Finding(
+            "skills", "ok",
+            f"AI skills look clean ({n} scanned)",
+            "no broken symlinks, orphans, or suspicious hooks",
+        ))
+    return out
+
+
+def scan_mcp_configs(
+    config_files: list[tuple[str, Path, str]] | None = None,
+    claude_json: "Path | None" = None,
+) -> list[Finding]:
+    """Audit MCP server configurations across agents."""
+    from .agents import discover_mcp_servers, _MCP_CONFIG_FILES
+    from pathlib import Path as _Path
+
+    cfgs = config_files if config_files is not None else _MCP_CONFIG_FILES
+    servers = discover_mcp_servers(cfgs, claude_json=claude_json)
+    out: list[Finding] = []
+
+    if not servers:
+        out.append(Finding(
+            "mcp", "ok", "No MCP configurations found",
+            "no config files at expected paths",
+        ))
+        return out
+
+    for srv in servers:
+        if srv.status == "config_error":
+            out.append(Finding(
+                "mcp", "caution",
+                f"MCP config error: {srv.name}",
+                srv.detail,
+                remediation=f"Fix or remove the entry in {srv.config_path.name}",
+                path=str(srv.config_path),
+            ))
+        elif srv.status == "command_not_found":
+            out.append(Finding(
+                "mcp", "caution",
+                f"MCP server '{srv.name}' — command not found",
+                f"{srv.detail} (source: {srv.source})",
+                remediation=f"Install the command or remove the entry from {srv.config_path.name}",
+                path=str(srv.config_path),
+            ))
+        else:
+            label = f"[{srv.transport}]" if srv.transport != "stdio" else ""
+            out.append(Finding(
+                "mcp", "ok",
+                f"MCP server '{srv.name}' {label}".strip(),
+                f"{srv.command} (source: {srv.source})",
+            ))
+
+    return out
+
+
 HEALTH_MODULES: list[HealthModule] = [
     HealthModule("xprotect", "XProtect status",
                  "Apple built-in malware signatures version + age",
@@ -453,4 +559,10 @@ HEALTH_MODULES: list[HealthModule] = [
     HealthModule("vulns", "Vulnerability check",
                  "Outdated pip-audit / brew / npm packages",
                  scan_vulnerabilities),
+    HealthModule("skills", "AI skill audit",
+                 "Broken symlinks, orphans, and suspicious hooks in agent skills",
+                 scan_skills),
+    HealthModule("mcp", "MCP server audit",
+                 "Configuration health of registered MCP servers",
+                 scan_mcp_configs),
 ]

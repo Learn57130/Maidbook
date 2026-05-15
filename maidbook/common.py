@@ -7,6 +7,7 @@ other modules depend on this one, not the other way around.
 from __future__ import annotations
 
 import contextlib
+import json
 import locale
 import os
 import shutil
@@ -14,6 +15,7 @@ import subprocess
 import threading
 import time
 import uuid
+from datetime import datetime
 from pathlib import Path
 
 # Required on macOS for UTF-8 in curses (locale must be set BEFORE curses
@@ -436,3 +438,143 @@ def is_app_running(app_name: str) -> bool:
     except (subprocess.SubprocessError, OSError):
         pass
     return False
+
+
+# ---------------------------------------------------------------------------
+# Persistent whitelist — categories the user has pinned
+# ---------------------------------------------------------------------------
+
+MAIDBOOK_DIR = HOME / ".maidbook"
+WHITELIST_PATH = MAIDBOOK_DIR / "whitelist.json"
+
+# macOS launchd job — scheduled cron clean
+LAUNCHD_LABEL = "com.maidbook.cron"
+LAUNCHD_PLIST_PATH = (
+    HOME / "Library" / "LaunchAgents" / f"{LAUNCHD_LABEL}.plist"
+)
+
+
+def load_whitelist() -> set[str]:
+    if not WHITELIST_PATH.exists():
+        return set()
+    try:
+        with open(WHITELIST_PATH) as f:
+            data = json.load(f)
+        if isinstance(data, list):
+            return set(data)
+    except (OSError, json.JSONDecodeError, ValueError):
+        pass
+    return set()
+
+
+def save_whitelist(keys: set[str]) -> None:
+    MAIDBOOK_DIR.mkdir(parents=True, exist_ok=True)
+    with open(WHITELIST_PATH, "w") as f:
+        json.dump(sorted(keys), f, indent=2)
+
+
+# ---------------------------------------------------------------------------
+# Quantitative analytics — persistent stats
+# ---------------------------------------------------------------------------
+
+STATS_PATH = MAIDBOOK_DIR / "stats.json"
+SCHEDULE_CONFIG_PATH = MAIDBOOK_DIR / "schedule.json"
+
+
+def load_schedule_config() -> dict:
+    """Return persisted schedule config, or defaults if not present.
+
+    Shape::
+
+        {
+            "interval":      "weekly" | "daily",
+            "hour":          0-23,
+            "minute":        0-59,
+            "selected_keys": ["pip", "npm", "maidbook/__pycache__", ...],
+        }
+
+    ``selected_keys`` is the list of category keys the user chose during the
+    TUI schedule-setup scan.  Empty list means "clean everything not
+    whitelisted" (headless default when no TUI setup has been run).
+    """
+    _defaults: dict = {
+        "interval": "weekly",
+        "hour": 3,
+        "minute": 0,
+        "selected_keys": [],
+    }
+    if not SCHEDULE_CONFIG_PATH.exists():
+        return _defaults.copy()
+    try:
+        with open(SCHEDULE_CONFIG_PATH) as f:
+            data = json.load(f)
+        if not isinstance(data, dict):
+            return _defaults.copy()
+        # Fill in missing keys with defaults
+        for k, v in _defaults.items():
+            data.setdefault(k, v)
+        return data
+    except (OSError, json.JSONDecodeError, ValueError):
+        return _defaults.copy()
+
+
+def save_schedule_config(config: dict) -> None:
+    MAIDBOOK_DIR.mkdir(parents=True, exist_ok=True)
+    with open(SCHEDULE_CONFIG_PATH, "w") as f:
+        json.dump(config, f, indent=2)
+
+
+def load_stats() -> dict:
+    if not STATS_PATH.exists():
+        return {"total_freed_all_time": 0, "sessions": [], "bloat_velocity": []}
+    try:
+        with open(STATS_PATH) as f:
+            return json.load(f)
+    except (OSError, json.JSONDecodeError, ValueError):
+        return {"total_freed_all_time": 0, "sessions": [], "bloat_velocity": []}
+
+
+def save_stats(stats: dict) -> None:
+    MAIDBOOK_DIR.mkdir(parents=True, exist_ok=True)
+    with open(STATS_PATH, "w") as f:
+        json.dump(stats, f, indent=2)
+
+
+def record_session(freed: int, categories: list[str], duration_secs: float) -> None:
+    stats = load_stats()
+    stats["total_freed_all_time"] = stats.get("total_freed_all_time", 0) + freed
+    stats.setdefault("sessions", []).append({
+        "date": datetime.now().isoformat(timespec="seconds"),
+        "freed": freed,
+        "categories": categories,
+        "duration": round(duration_secs, 1),
+    })
+    if len(stats["sessions"]) > 500:
+        stats["sessions"] = stats["sessions"][-500:]
+    save_stats(stats)
+
+
+def record_bloat_snapshot(total_cache_bytes: int) -> None:
+    stats = load_stats()
+    stats.setdefault("bloat_velocity", []).append({
+        "date": datetime.now().isoformat(timespec="seconds"),
+        "total_cache_size": total_cache_bytes,
+    })
+    if len(stats["bloat_velocity"]) > 365:
+        stats["bloat_velocity"] = stats["bloat_velocity"][-365:]
+    save_stats(stats)
+
+
+# ---------------------------------------------------------------------------
+# Cron log directory
+# ---------------------------------------------------------------------------
+
+LOG_DIR = MAIDBOOK_DIR / "logs"
+
+
+def append_cron_log(text: str) -> Path:
+    LOG_DIR.mkdir(parents=True, exist_ok=True)
+    log_file = LOG_DIR / f"{datetime.now().strftime('%Y-%m-%d')}.log"
+    with open(log_file, "a") as f:
+        f.write(text)
+    return log_file

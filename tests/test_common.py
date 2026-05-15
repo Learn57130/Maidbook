@@ -387,3 +387,155 @@ def test_is_app_running(mock_run):
     # Subprocess error
     mock_run.side_effect = subprocess.SubprocessError
     assert not common.is_app_running("Safari")
+
+
+# ---------------------------------------------------------------------------
+# Whitelist tests
+# ---------------------------------------------------------------------------
+
+def test_whitelist_round_trip(monkeypatch, tmp_path):
+    monkeypatch.setattr(common, "MAIDBOOK_DIR", tmp_path)
+    monkeypatch.setattr(common, "WHITELIST_PATH", tmp_path / "whitelist.json")
+
+    assert common.load_whitelist() == set()
+
+    common.save_whitelist({"pip", "brew", "xcode"})
+    loaded = common.load_whitelist()
+    assert loaded == {"pip", "brew", "xcode"}
+
+    common.save_whitelist(set())
+    assert common.load_whitelist() == set()
+
+
+def test_whitelist_corrupt_file(monkeypatch, tmp_path):
+    wl_path = tmp_path / "whitelist.json"
+    wl_path.write_text("not json!!!")
+    monkeypatch.setattr(common, "WHITELIST_PATH", wl_path)
+
+    assert common.load_whitelist() == set()
+
+
+# ---------------------------------------------------------------------------
+# Stats tests
+# ---------------------------------------------------------------------------
+
+def test_stats_round_trip(monkeypatch, tmp_path):
+    monkeypatch.setattr(common, "MAIDBOOK_DIR", tmp_path)
+    monkeypatch.setattr(common, "STATS_PATH", tmp_path / "stats.json")
+
+    stats = common.load_stats()
+    assert stats["total_freed_all_time"] == 0
+    assert stats["sessions"] == []
+
+    common.record_session(1024, ["pip", "brew"], 2.5)
+    stats = common.load_stats()
+    assert stats["total_freed_all_time"] == 1024
+    assert len(stats["sessions"]) == 1
+    assert stats["sessions"][0]["freed"] == 1024
+
+    common.record_session(2048, ["npm"], 1.0)
+    stats = common.load_stats()
+    assert stats["total_freed_all_time"] == 3072
+    assert len(stats["sessions"]) == 2
+
+
+def test_bloat_snapshot(monkeypatch, tmp_path):
+    monkeypatch.setattr(common, "MAIDBOOK_DIR", tmp_path)
+    monkeypatch.setattr(common, "STATS_PATH", tmp_path / "stats.json")
+
+    common.record_bloat_snapshot(500_000_000)
+    stats = common.load_stats()
+    assert len(stats["bloat_velocity"]) == 1
+    assert stats["bloat_velocity"][0]["total_cache_size"] == 500_000_000
+
+
+def test_stats_corrupt_file(monkeypatch, tmp_path):
+    stats_path = tmp_path / "stats.json"
+    stats_path.write_text("corrupted")
+    monkeypatch.setattr(common, "STATS_PATH", stats_path)
+
+    stats = common.load_stats()
+    assert stats["total_freed_all_time"] == 0
+
+
+# ---------------------------------------------------------------------------
+# Cron log tests
+# ---------------------------------------------------------------------------
+
+def test_append_cron_log(monkeypatch, tmp_path):
+    monkeypatch.setattr(common, "LOG_DIR", tmp_path / "logs")
+
+    path = common.append_cron_log("test log entry\n")
+    assert path.exists()
+    assert "test log entry" in path.read_text()
+
+
+# ---------------------------------------------------------------------------
+# Schedule config
+# ---------------------------------------------------------------------------
+
+def test_schedule_config_defaults_when_missing(monkeypatch, tmp_path):
+    monkeypatch.setattr(common, "MAIDBOOK_DIR", tmp_path)
+    monkeypatch.setattr(common, "SCHEDULE_CONFIG_PATH", tmp_path / "schedule.json")
+    cfg = common.load_schedule_config()
+    assert cfg["interval"] == "weekly"
+    assert cfg["hour"] == 3
+    assert cfg["minute"] == 0
+    assert cfg["selected_keys"] == []
+
+
+def test_schedule_config_round_trip(monkeypatch, tmp_path):
+    monkeypatch.setattr(common, "MAIDBOOK_DIR", tmp_path)
+    monkeypatch.setattr(common, "SCHEDULE_CONFIG_PATH", tmp_path / "schedule.json")
+    common.save_schedule_config({
+        "interval": "daily",
+        "hour": 9,
+        "minute": 30,
+        "selected_keys": ["pip", "npm", "browser-brave"],
+    })
+    cfg = common.load_schedule_config()
+    assert cfg["interval"] == "daily"
+    assert cfg["hour"] == 9
+    assert cfg["minute"] == 30
+    assert cfg["selected_keys"] == ["pip", "npm", "browser-brave"]
+
+
+def test_schedule_config_corrupt_file_returns_defaults(monkeypatch, tmp_path):
+    p = tmp_path / "schedule.json"
+    p.write_text("not json {{{")
+    monkeypatch.setattr(common, "MAIDBOOK_DIR", tmp_path)
+    monkeypatch.setattr(common, "SCHEDULE_CONFIG_PATH", p)
+    cfg = common.load_schedule_config()
+    assert cfg["interval"] == "weekly"   # default
+    assert cfg["selected_keys"] == []
+
+
+def test_schedule_config_fills_missing_keys(monkeypatch, tmp_path):
+    """Partial config file should have missing keys filled from defaults."""
+    import json
+    p = tmp_path / "schedule.json"
+    p.write_text(json.dumps({"interval": "daily"}))
+    monkeypatch.setattr(common, "MAIDBOOK_DIR", tmp_path)
+    monkeypatch.setattr(common, "SCHEDULE_CONFIG_PATH", p)
+    cfg = common.load_schedule_config()
+    assert cfg["interval"] == "daily"
+    assert "selected_keys" in cfg    # filled from defaults
+    assert cfg["selected_keys"] == []
+
+
+def test_record_session_truncates_at_500(monkeypatch, tmp_path):
+    """Sessions list must not grow past 500 entries."""
+    monkeypatch.setattr(common, "MAIDBOOK_DIR", tmp_path)
+    monkeypatch.setattr(common, "STATS_PATH", tmp_path / "stats.json")
+
+    # Seed with 500 sessions
+    stats = common.load_stats()
+    stats["sessions"] = [{"date": "2026-01-01", "freed": 100,
+                          "categories": [], "duration": 1.0}] * 500
+    with open(common.STATS_PATH, "w") as f:
+        import json; json.dump(stats, f)
+
+    # Add one more
+    common.record_session(1024, ["pip"], 1.0)
+    result = common.load_stats()
+    assert len(result["sessions"]) == 500
