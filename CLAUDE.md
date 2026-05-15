@@ -267,6 +267,15 @@ unexpected, surface it — don't hide it behind a `safe` tag.
 
 ## Recent Changes
 
+### [Minor Change] 2026-05-15 23:07
+
+Files modified:
+- `CHANGELOG.md`
+
+Diff:  1 file changed, 80 insertions(+)
+
+---
+
 ### [Minor Change] 2026-05-15 22:29
 
 Files modified:
@@ -356,16 +365,6 @@ Files modified:
 - `tests/test_common.py`
 
 Diff:  14 files changed, 2368 insertions(+), 94 deletions(-)
-
----
-
-### [Minor Change] 2026-05-15 13:33
-
-Files modified:
-- `maidbook/cli.py`
-- `maidbook/tui.py`
-
-Diff:  14 files changed, 2178 insertions(+), 93 deletions(-)
 
 ---
 

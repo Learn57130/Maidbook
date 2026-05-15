@@ -21,6 +21,9 @@ A tidy cache cleaner + health check for macOS. Single-binary TUI, stdlib-only, n
   ❯ ● Cache cleaner     free up disk space · safe for cookies, history, logins
     ○ Health check      malware heuristics · code-sign audit · XProtect · CVE scan
     ○ Both              clean caches first, then run health check
+    ○ Agent tools       browse Claude / Codex / Gemini skills + MCP server configs
+    ○ Stats             lifetime freed · session history · bloat velocity trend
+    ○ Manage schedule   view or remove the scheduled automatic clean
 
   ↑/↓ move · ↵ select · q quit
 ```
@@ -31,9 +34,12 @@ Most Mac cleaners either want $40 a year or do scary kernel things. Maidbook is
 a single-file Python tool that:
 
 - **Cleans caches safely** — browsers keep their cookies, history, logins, and bookmarks. It only touches `Cache/`, `Code Cache/`, and `GPUCache/` subfolders.
+- **Finds build artifacts** — recursively discovers `node_modules/`, `target/`, `venv/`, `__pycache__`, and similar dev-artifact directories across your project roots. Each artifact dir becomes its own selectable row.
 - **Uses vendor tools when possible** — `pip cache purge`, `npm cache clean`, `brew cleanup -s --prune=all`. Falls back to `shutil.rmtree` otherwise.
-- **Runs a read-only health check** — XProtect status, LaunchAgent heuristics, `codesign --verify` across `/Applications`, Gatekeeper quarantine review, outdated packages via `pip-audit` / `brew outdated` / `npm outdated`.
+- **Runs a read-only health check** — XProtect status, LaunchAgent heuristics, `codesign --verify` across `/Applications`, Gatekeeper quarantine review, outdated packages via `pip-audit` / `brew outdated` / `npm outdated`, plus AI agent skill and MCP config audits.
 - **Auto-discovers** every folder under `~/Library/Caches/` and classifies it (`safe` / `caution` / `review`) so nothing goes missing.
+- **Schedules automatic cleans** — installs a launchd job that runs headless cron mode on your chosen interval, logging results to `~/.maidbook/logs/`.
+- **Tracks lifetime stats** — persistent analytics across all sessions (total freed, bloat velocity, average per session).
 
 ## ⚠️ Honest scope note
 
@@ -167,6 +173,12 @@ maidbook              # launch the TUI
 maidbook --cli        # plain-text CLI (no curses)
 maidbook --cli --all  # clean every category, no prompts (DANGER)
 maidbook --dry-run    # scan only, nothing deleted
+maidbook --cron       # headless mode: clean persisted selection, JSON output
+maidbook --schedule   # install a weekly launchd job (runs --cron automatically)
+maidbook --schedule daily   # daily instead of weekly
+maidbook --unschedule # remove the launchd scheduled clean
+maidbook --history    # print the last 10 cron-session log entries
+maidbook --stats      # print lifetime cleaning statistics
 maidbook --version
 ```
 
@@ -185,18 +197,31 @@ maidbook --version
 | Key | Action |
 |---|---|
 | `↑` `↓` / `j` `k` | Move cursor |
+| `G` | Jump to last row |
+| `gg` | Jump to first row |
 | `Home` | Jump to first row |
 | `End` (`Fn`+`→` on Macbook) | Jump to last row |
 | `PgUp` / `PgDn` | Move 5 rows at a time |
 | `Space` | Toggle selection |
-| `A` | Select all |
+| `A` | Select all (skips pinned rows) |
 | `N` | Deselect all |
 | `s` | Select everything with safety = `safe` |
 | `b` | Select browsers (replaces current selection) |
 | `o` | Select auto-discovered (replaces current selection) |
+| `v` | Select dev-artifacts (replaces current selection) |
+| `w` | Pin / unpin current row (pinned rows are skipped by `A` and cron) |
 | `d` | Toggle dry-run mode |
 | `r` | Rescan |
-| `↵` | Clean (requires confirmation) |
+| `↵` | Open action-choice screen (Clean now / Schedule clean) |
+| `q` | Quit |
+
+**Action-choice screen** (shown after `↵` in the cache selector)
+
+| Key | Action |
+|---|---|
+| `↑` `↓` / `j` `k` | Move between "Clean now" / "Schedule clean" |
+| `↵` | Confirm choice |
+| `n` `Esc` | Back to cache selector |
 | `q` | Quit |
 
 **Health check results**
@@ -204,10 +229,23 @@ maidbook --version
 | Key | Action |
 |---|---|
 | `↑` `↓` / `j` `k` | Scroll one line |
+| `G` | Jump to last finding |
+| `gg` | Jump to first finding |
 | `Home` | Jump to first finding |
 | `End` (`Fn`+`→` on Macbook) | Jump to last finding |
 | `PgUp` / `PgDn` | Scroll 10 findings at a time |
 | `C` | Copy full report to clipboard |
+| `r` | Rescan |
+| `m` | Back to menu |
+| `q` | Quit |
+
+**Agent tools browser**
+
+| Key | Action |
+|---|---|
+| `↑` `↓` / `j` `k` | Move cursor |
+| `x` | Mark entry for removal |
+| `y` | Confirm removal of marked entry |
 | `r` | Rescan |
 | `m` | Back to menu |
 | `q` | Quit |
@@ -219,7 +257,11 @@ maidbook --version
 - **Browser caches only**, never browser profile data.
 - **Running browsers are skipped** automatically via `pgrep`.
 - **Auto-discovered rows default to `review`** — the user decides, we don't.
-- The **Health Check is read-only** — it reports, never modifies.
+- **Pinned rows** (`⊘`) are excluded from `A` select-all, tag filters, and cron runs.
+- **Build artifact rows default to `caution`** — they'll cost a rebuild, so they're never auto-selected.
+- **The Health Check is read-only** — it reports, never modifies.
+- **Agent tools removal requires `x` + `y` double-confirm** — the browser never removes without explicit confirmation.
+- **Async deletion** — large trees are renamed into a trash staging area instantly, then deleted in the background. The summary always distinguishes "Freed: X" from "Freed: X (Y still finalizing in background)."
 
 ## What's in the Health Check
 
@@ -230,6 +272,97 @@ maidbook --version
 | **Code-sign audit** | `codesign --verify --strict` across `/Applications` + `~/Applications` |
 | **Quarantine review** | Files in `~/Downloads` / `~/Desktop` still flagged by Gatekeeper |
 | **Vulnerability check** | Wraps `pip-audit`, `brew outdated`, `npm outdated -g` when available |
+| **Agent skill audit** | Broken symlinks, orphan SKILL.md files, suspicious shell hooks in `~/.claude/skills/`, `~/.codex/skills/`, `~/.gemini/` |
+| **MCP config check** | Validates command existence for each MCP server in Claude / Gemini configs; flags missing executables |
+
+## Build artifact scanner
+
+Maidbook v0.3 recursively discovers dev-build artifacts across common project
+roots (`~/Developer`, `~/Projects`, `~/repos`, `~/code`, `~/Desktop`,
+`~/Documents`):
+
+| Artifact | Why it's flagged |
+|---|---|
+| `node_modules/` | npm/yarn/pnpm install cache |
+| `target/` | Rust / Java / Scala build output |
+| `.build/` | Swift Package Manager |
+| `build/` `dist/` | Python/JS generic build (only when a project file sibling is found) |
+| `venv/` `.venv/` | Python virtual environments |
+| `__pycache__/` | Python bytecode caches |
+
+Each artifact dir becomes its own selectable row tagged `dev-artifacts`,
+safety `caution`. Filter them in the TUI with `[v]`.
+
+**`.maidbook-keep` sentinel** — drop a `.maidbook-keep` file in any project
+root and Maidbook will skip that project entirely during artifact scanning.
+
+## Scheduled automatic clean
+
+Set up a recurring clean from inside the TUI (cache selector → `↵` → "Schedule clean")
+or from the command line:
+
+```bash
+maidbook --schedule          # weekly, runs every Sunday at 03:00
+maidbook --schedule daily    # daily at 03:00
+maidbook --unschedule        # remove
+```
+
+The schedule installs a launchd job under
+`~/Library/LaunchAgents/com.maidbook.cron.plist`. It runs
+`maidbook --cron` automatically and logs results to `~/.maidbook/logs/`.
+
+When you schedule from inside the TUI, the **exact categories you had
+selected** are persisted — cron will clean those and only those.
+
+```bash
+maidbook --history    # print the last 10 cron-session summaries
+maidbook --cron       # run once immediately (JSON output to stdout)
+maidbook --cron --dry-run   # dry run, nothing deleted
+```
+
+The "Manage schedule" TUI menu item shows the current status and lets
+you remove the schedule with `↵`.
+
+## Analytics & stats
+
+Maidbook tracks every session in `~/.maidbook/stats.json`:
+
+- **Lifetime freed** — cumulative bytes reclaimed across all runs.
+- **Session history** — date, amount freed, categories cleaned, duration (capped at 500 entries).
+- **Bloat velocity** — cache-size snapshot taken at every TUI scan, so you can see how fast your caches grow.
+
+View the Stats screen inside the TUI (menu → "Stats") or from the CLI:
+
+```bash
+maidbook --stats
+```
+
+## Agent tools browser
+
+The **Agent tools** TUI menu opens a browser that discovers and audits your
+local AI infrastructure:
+
+- **Claude Code / Codex / Gemini skills** — flags broken symlinks (`caution`),
+  orphan `SKILL.md` files (`info`), and suspicious shell hooks in skill
+  frontmatter (`review`).
+- **MCP server configs** — parses `~/.claude/mcp.json`, Claude Desktop config,
+  and `~/.gemini/settings.json`; validates that each server's command exists on
+  disk; flags duplicates by inode.
+
+The browser is read-only by default. Press `x` to mark an entry for removal,
+then `y` to confirm. Only broken / stale entries can be removed; healthy entries
+are protected.
+
+## ASCII mascot
+
+When your terminal is wider than 100 columns, Maidbook shows a small reactive
+character in the banner area:
+
+| State | Trigger |
+|---|---|
+| Tidy | Total cache < 500 MB |
+| Messy | 500 MB – 2 GB |
+| Chaos | > 2 GB |
 
 ## Requirements
 
@@ -253,34 +386,18 @@ findings. Nothing crashes; nothing pesters you to install anything.
 
 Linux is not a target — several checks (XProtect, `codesign`, `xattr`, `pbcopy`) are macOS-specific.
 
-## Roadmap — v0.3 planned
+## Roadmap — v0.4 ideas
 
-A lean list of what's next. Order is priority-ish, not strict.
+A lean list of what might come next. Nothing committed — open an issue if you want to discuss scope or grab one to contribute.
 
-- **Intelligent cache discovery** — signature-based scanning for dev-heavy
-  artifacts (`node_modules`, `target/`, `docker`, `__pycache__`) with
-  automated path detection across your projects dir.
-- **Risk grading** — finer tiering of deletable items by "risk level"
-  (low / medium / high) to distinguish safe log cleanup from time-costly
-  build re-compilation.
-- **Headless cron mode** — a `--cron` flag for automated background purges
-  based on user-defined TTL (time-to-live) rules.
-- **Smart whitelisting** — toggle-based "pinning" in the TUI to protect
-  specific active projects from automated cleanup.
-- **Quantitative analytics** — persistent tracking (JSON / SQLite) of
-  cumulative space saved and "bloat velocity" (GB growth over time).
-- **Post-action reporting** — summary logs after each cron execution for
-  full transparency on what was reclaimed.
-- **ASCII mascot integration** — a reactive minimalist mascot inside the
-  TUI that changes state based on how tidy the system is.
-- **AI-agent skill audit** — a 6th health module that scans `~/.claude/`,
-  `~/.codex/`, `~/.gemini/` skill directories for broken symlinks, orphan
-  `SKILL.md` files, and suspicious shell hooks in frontmatter. Read-only
-  audit only; full skill management (sync, install, uninstall) stays out
-  of scope and lives in dedicated tooling.
+- **Within-category progress** — show the current path / file count inside the clean screen so large trees feel less opaque.
+- **Configurable scan roots** — let users add custom project root directories to the artifact scanner via a lightweight config file.
+- **Scheduled clean editor** — edit the schedule interval and time from inside the TUI without running `--unschedule` + `--schedule` again.
+- **Risk grading** — finer tiering (low / medium / high) displayed alongside the existing `safe / caution / review` safety column.
+- **Post-clean diff** — a "what changed" summary after each session (categories, sizes before/after) exported to the stats log.
+- **Multi-profile support** — handle macOS fast-user-switching by scoping `~/.maidbook/` to the current user UID.
 
-Open an issue if you want to discuss scope on any of these, or want to grab
-one to contribute.
+Open an issue if you want to discuss scope on any of these, or want to grab one to contribute.
 
 ## Contributing
 
@@ -293,109 +410,3 @@ MIT. See [LICENSE](./LICENSE).
 ## Acknowledgments
 
 UI aesthetic borrowed from Claude Code — the rounded cards, braille spinner, and restrained amber palette.
-
-
-## Changelog
-
-### [Minor Change] 2026-05-15 22:29
-
-Files modified:
-- `maidbook/tui.py`
-
-Diff:  14 files changed, 2387 insertions(+), 95 deletions(-)
-
----
-
-### [Minor Change] 2026-05-15 22:28
-
-Files modified:
-- `maidbook/tui.py`
-
-Diff:  14 files changed, 2392 insertions(+), 95 deletions(-)
-
----
-
-### [Minor Change] 2026-05-15 22:25
-
-Files modified:
-- `maidbook/cli.py`
-- `maidbook/tui.py`
-
-Diff:  14 files changed, 2396 insertions(+), 95 deletions(-)
-
----
-
-### [Minor Change] 2026-05-15 22:22
-
-Files modified:
-- `maidbook/cli.py`
-- `maidbook/tui.py`
-
-Diff:  14 files changed, 2369 insertions(+), 95 deletions(-)
-
----
-
-### [Minor Change] 2026-05-15 22:11
-
-Files modified:
-- `maidbook/tui.py`
-
-Diff:  14 files changed, 2349 insertions(+), 95 deletions(-)
-
----
-
-### [Minor Change] 2026-05-15 15:18
-
-Files modified:
-- `maidbook/tui.py`
-
-Diff:  14 files changed, 2348 insertions(+), 94 deletions(-)
-
----
-
-### [Major Change] 2026-05-15 14:04
-
-Files modified:
-- `maidbook/cli.py`
-- `maidbook/common.py`
-- `maidbook/tui.py`
-- `tests/test_cli.py`
-- `tests/test_common.py`
-
-Diff:  14 files changed, 2472 insertions(+), 94 deletions(-)
-
----
-
-### [Minor Change] 2026-05-15 13:57
-
-Files modified:
-- `maidbook/__main__.py`
-- `maidbook/cli.py`
-- `tests/test_cli.py`
-
-Diff:  14 files changed, 2371 insertions(+), 94 deletions(-)
-
----
-
-### [Major Change] 2026-05-15 13:45
-
-Files modified:
-- `maidbook/cli.py`
-- `maidbook/common.py`
-- `maidbook/tui.py`
-- `tests/test_common.py`
-
-Diff:  14 files changed, 2368 insertions(+), 94 deletions(-)
-
----
-
-### [Minor Change] 2026-05-15 13:33
-
-Files modified:
-- `maidbook/cli.py`
-- `maidbook/tui.py`
-
-Diff:  14 files changed, 2178 insertions(+), 93 deletions(-)
-
----
-
