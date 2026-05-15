@@ -4,6 +4,86 @@ All notable changes to Maidbook. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/), versioning per
 [SemVer](https://semver.org/).
 
+## [0.3.0] — 2026-05-15
+
+The "do more, know more" release — build-artifact purge, AI agent tooling,
+scheduled automatic cleans, lifetime analytics, and a full TUI overhaul.
+
+### Added
+
+- **Build artifact scanner.** Recursively finds `node_modules/`, `target/`,
+  `.build/`, `build/`, `dist/`, `venv/`, `.venv/`, `__pycache__/` across
+  common project roots (`~/Developer`, `~/Projects`, `~/repos`, `~/code`,
+  `~/Desktop`, `~/Documents`). Each artifact dir becomes its own selectable
+  Category row, tagged `dev-artifacts`, safety `caution`. Respects a
+  `.maidbook-keep` sentinel file to skip a project entirely. Filter with
+  `[v]` in the select screen.
+- **Agent tools browser (`agents.py`).** New TUI mode discovers and manages
+  AI infrastructure: Claude Code / Codex / Gemini skills (detects
+  broken symlinks, orphan SKILL.md files, suspicious shell hooks) and MCP
+  server configs (validates command existence, deduplicates by inode).
+  `[x]` removes broken/stale entries after `[y]` confirmation. Exposed as
+  a health-check module too (`scan_skills`, `scan_mcp_configs`).
+- **Scheduled automatic clean.** `[↵]` on the select screen now opens an
+  action-choice screen: "Clean now" (existing confirm flow) or "Schedule
+  clean" (interval + time picker overlay → installs a launchd job). The
+  schedule persists `selected_keys` so cron cleans exactly the categories
+  chosen during TUI setup. "Manage schedule" menu item shows status +
+  category count; `[↵]` to remove. `--schedule` / `--unschedule` CLI flags.
+- **Headless cron mode (`--cron`).** Reads `selected_keys` from
+  `schedule.json`, falls back to all non-whitelisted. Outputs machine-
+  readable JSON, appends human-readable log to `~/.maidbook/logs/`.
+  `--history` prints the last 10 log entries.
+- **Quantitative analytics.** `~/.maidbook/stats.json` tracks
+  `total_freed_all_time`, per-session history (capped at 500), and bloat
+  velocity snapshots recorded at every scan. TUI "Stats" screen shows
+  lifetime freed, average per session, sparkline velocity trend, and recent
+  sessions. `--stats` CLI flag.
+- **ASCII mascot.** Three-state reactive character in the banner area
+  (tidy / messy / chaos based on total cache size) — visible when terminal
+  width > 100 columns.
+- **Smart whitelist (`[w]` pin).** Toggle-pin a category from the select
+  screen; pinned rows show `⊘`, are skipped by `[A]` select-all, and
+  excluded from cron runs. Persisted to `~/.maidbook/whitelist.json`.
+- **Vim navigation.** `G` jumps to last row, `gg` to first; cursor wraps
+  at top/bottom in select, health results, and agent browse views.
+- **Dry-run toggle `[d]`.** Flip dry-run on/off from the select screen
+  without re-scanning.
+
+### Changed
+
+- **`[↵]` in select now opens action-choice** ("Clean now" / "Schedule
+  clean") instead of going straight to the confirm dialog. `[n]`/`Esc`
+  cancels back to select; `[q]` quits.
+- **`[q]` in confirm** quits the app; `[n]`/`Esc` goes back to select
+  (previously only `n`/`Esc` worked).
+- **`[q]`/`Esc` in clean mode** sets `stop_requested` for a graceful
+  per-category abort (previously only Ctrl+C worked).
+- **Schedule menu renamed** "Manage schedule" — setup is now done via the
+  action-choice flow off the cache select screen, keeping the TUI DRY.
+- **`unschedule_cron` now removes `schedule.json`** so stale
+  `selected_keys` don't survive into the next install.
+- **Stats `record_session` uses `actually_freed`** (post-async-pending
+  value) instead of raw `total_freed`, matching what the on-screen summary
+  displays. Fixes lifetime stats over-reporting.
+- **CLI per-category scan isolation** via `_safe_scan()` helper —
+  a misbehaving category no longer aborts the whole `--cli` run.
+
+### Fixed
+
+- Dead `_schedule_result` attribute, dead `t`/`lbl` locals in schedule
+  confirm, unused `human` import in `agents.py` — removed.
+- Stats screen hint corrected to `m menu · q quit` (had stale
+  `j/k navigate · ↵ select` copy that didn't apply).
+
+### Tests
+
+110 tests, up from 98 at v0.2.0. New coverage: build artifact scanner,
+agent skill/MCP discovery and removal, cron selected-keys logic,
+unschedule config cleanup, clean-worker session recording, dry-run
+no-record assertion, 500-session truncation, schedule_status, whitelist
+round-trip, bloat snapshot, async deletion lifecycle.
+
 ## [0.2.0] — 2026-05-03
 
 The "fast clean + reachable on PyPI" release. First minor bump out of the
