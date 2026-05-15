@@ -240,7 +240,7 @@ pip install ".[test]"
 python -m pytest tests/ -v
 ```
 
-Currently 110/110 passing as of v0.3.0. When you fix a bug, add a test that
+Currently 110/110 passing as of v0.3.1. When you fix a bug, add a test that
 locks in the regression in the same commit — the v0.1.1 / v0.1.2 patches
 each shipped with named regression tests, and that's the standard.
 
@@ -266,6 +266,27 @@ unexpected, surface it — don't hide it behind a `safe` tag.
 
 
 ## Recent Changes
+
+### [Release] v0.3.1 — 2026-05-15
+
+**Current state of the repo.** Everything below is shipped and on PyPI.
+
+- **v0.3.0** — full feature release (build artifacts, agent tools, scheduled
+  clean, cron mode, analytics, ASCII mascot, whitelist/pin, Vim navigation,
+  async deletion, 7 health modules). Tagged `v0.3.0`, on PyPI.
+- **v0.3.1** — docs-only patch: README rewritten to cover all v0.3 features
+  (6-item menu, keybindings, new CLI flags, new sections for agent tools /
+  scheduled clean / analytics). Needed because PyPI disallows re-uploading
+  the same version. Tagged `v0.3.1`, on PyPI.
+- **Tests:** 110/110 green (macOS, Python 3.9 / 3.11 / 3.13).
+- **Next milestone:** v0.4 — see Roadmap in README.
+
+Files modified in this patch:
+- `README.md` (full v0.3 rewrite)
+- `maidbook/__init__.py` (0.3.0 → 0.3.1)
+- `pyproject.toml` (0.3.0 → 0.3.1)
+
+---
 
 ### [Minor Change] 2026-05-15 23:07
 
@@ -342,29 +363,6 @@ Files modified:
 - `tests/test_common.py`
 
 Diff:  14 files changed, 2472 insertions(+), 94 deletions(-)
-
----
-
-### [Minor Change] 2026-05-15 13:57
-
-Files modified:
-- `maidbook/__main__.py`
-- `maidbook/cli.py`
-- `tests/test_cli.py`
-
-Diff:  14 files changed, 2371 insertions(+), 94 deletions(-)
-
----
-
-### [Major Change] 2026-05-15 13:45
-
-Files modified:
-- `maidbook/cli.py`
-- `maidbook/common.py`
-- `maidbook/tui.py`
-- `tests/test_common.py`
-
-Diff:  14 files changed, 2368 insertions(+), 94 deletions(-)
 
 ---
 
