@@ -267,6 +267,14 @@ unexpected, surface it — don't hide it behind a `safe` tag.
 
 ## Recent Changes
 
+### [Move] 2026-05-16 — repo relocated
+
+Project moved from `~/Desktop/Learn-Level-UP/Project/Maidbook`
+to `~/Desktop/Builder/Maidbook`. Git remote unchanged
+(`https://github.com/Learn57130/Maidbook.git`).
+
+---
+
 ### [Release] v0.3.1 — 2026-05-15
 
 **Current state of the repo.** Everything below is shipped and on PyPI.
