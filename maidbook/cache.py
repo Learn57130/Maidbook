@@ -17,7 +17,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable
 
-from .common import HOME, fmt_path, is_app_running, path_size, rm_path, rm_path_async
+from .common import HOME, fmt_path, is_app_running, path_size, rm_path_async
 
 
 @dataclass
