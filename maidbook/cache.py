@@ -294,15 +294,15 @@ def discover_other_caches() -> list[tuple[str, Path]]:
         if len(parts) >= 3 and parts[0] == "Library" and parts[1] == "Caches":
             covered.add(parts[2])
     try:
-        entries = sorted(base.iterdir(), key=lambda p: p.name.lower())
+        found: list[tuple[str, Path]] = []
+        for child in base.iterdir():
+            if child.name.startswith(".") or child.name in covered:
+                continue
+            found.append((child.name, child))
+        found.sort(key=lambda x: x[0].lower())
+        return found
     except OSError:
         return []
-    found: list[tuple[str, Path]] = []
-    for child in entries:
-        if child.name.startswith(".") or child.name in covered:
-            continue
-        found.append((child.name, child))
-    return found
 
 
 def make_discovered_cleaner(path: Path):
