@@ -129,7 +129,7 @@ def clean_brew(dry: bool) -> tuple[int, int, str]:
                                 try:
                                     freed = int(float(val[: -len(unit)]) * mult)
                                 except ValueError:
-                                    pass
+                                    freed = 0
                                 break
         return freed, 0, "brew cleaned"
     except (subprocess.SubprocessError, FileNotFoundError):

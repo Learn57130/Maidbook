@@ -38,6 +38,18 @@ def test_clean_brew(mock_run, monkeypatch, tmp_path):
     assert freed == int(50.0 * (1 << 20))
     assert errs == 0
 
+@patch("subprocess.run")
+def test_clean_brew_invalid_size(mock_run, monkeypatch, tmp_path):
+    monkeypatch.setattr(cache, "HOME", tmp_path)
+
+    mock_proc = MagicMock(returncode=0)
+    mock_proc.stdout = "This operation has freed approximately INVALID_MB of disk space.\n"
+    mock_run.return_value = mock_proc
+
+    freed, errs, msg = cache.clean_brew(False)
+    assert freed == 0
+    assert errs == 0
+
 @patch("maidbook.cache.path_size")
 @patch("maidbook.cache.is_app_running")
 def test_browser_cleaner(mock_is_app, mock_cache_size, monkeypatch, tmp_path):
