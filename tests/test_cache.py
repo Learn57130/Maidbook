@@ -229,3 +229,77 @@ def test_build_categories_includes_artifacts(monkeypatch, tmp_path):
     artifact_cats = [c for c in cats if "dev-artifacts" in c.tags]
     assert len(artifact_cats) >= 1
     assert any("node_modules" in c.name for c in artifact_cats)
+
+
+# ---------------------------------------------------------------------------
+# Xcode DerivedData scanner / cleaner
+# ---------------------------------------------------------------------------
+
+@patch("maidbook.cache.path_size")
+def test_scan_xcode(mock_path_size, monkeypatch, tmp_path):
+    monkeypatch.setattr(cache, "HOME", tmp_path)
+    mock_path_size.return_value = 1234
+
+    size = cache.scan_xcode()
+
+    assert size == 1234
+    mock_path_size.assert_called_once_with(tmp_path / "Library/Developer/Xcode/DerivedData")
+
+def test_clean_xcode_no_derived_data(monkeypatch, tmp_path):
+    monkeypatch.setattr(cache, "HOME", tmp_path)
+    # tmp_path is a fresh empty directory, so DerivedData won't exist.
+
+    freed, errs, msg = cache.clean_xcode(False)
+    assert freed == 0
+    assert errs == 0
+    assert msg == "no DerivedData"
+
+@patch("maidbook.cache.path_size")
+def test_clean_xcode_dry_run(mock_path_size, monkeypatch, tmp_path):
+    monkeypatch.setattr(cache, "HOME", tmp_path)
+    dd = tmp_path / "Library/Developer/Xcode/DerivedData"
+    dd.mkdir(parents=True)
+    (dd / "Project1").mkdir()
+    (dd / "Project2").mkdir()
+
+    mock_path_size.return_value = 500
+
+    freed, errs, msg = cache.clean_xcode(True)
+
+    assert freed == 1000 # 500 * 2
+    assert errs == 0
+    assert "would clear" in msg
+    assert (dd / "Project1").exists()
+
+@patch("maidbook.cache.rm_path_async")
+def test_clean_xcode_real_run(mock_rm, monkeypatch, tmp_path):
+    monkeypatch.setattr(cache, "HOME", tmp_path)
+    dd = tmp_path / "Library/Developer/Xcode/DerivedData"
+    dd.mkdir(parents=True)
+    (dd / "Project1").mkdir()
+    (dd / "Project2").mkdir()
+
+    mock_rm.return_value = (500, 0)
+
+    freed, errs, msg = cache.clean_xcode(False)
+
+    assert freed == 1000
+    assert errs == 0
+    assert "cleared" in msg
+    assert mock_rm.call_count == 2
+
+@patch("maidbook.cache.rm_path_async")
+def test_clean_xcode_real_run_errors(mock_rm, monkeypatch, tmp_path):
+    monkeypatch.setattr(cache, "HOME", tmp_path)
+    dd = tmp_path / "Library/Developer/Xcode/DerivedData"
+    dd.mkdir(parents=True)
+    (dd / "Project1").mkdir()
+
+    # Simulate an error
+    mock_rm.return_value = (100, 1)
+
+    freed, errs, msg = cache.clean_xcode(False)
+
+    assert freed == 100
+    assert errs == 1
+    assert "cleared" in msg
