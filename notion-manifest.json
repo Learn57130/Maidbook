@@ -1,0 +1,19 @@
+{
+  "notion_id": "372d099a-9760-81e9-a99c-eeace3c0d695",
+  "name": "Maidbook",
+  "assign": "Claude",
+  "state": "Not started",
+  "priority": "Medium",
+  "workspace": "Meta",
+  "acceptance": "(placeholder — fill once project scope is defined)",
+  "start_date": "2026-06-01",
+  "subpages": {
+    "context": "372d099a-9760-817d-841b-c3bf7ae082bf",
+    "spec": "372d099a-9760-816d-aec5-e4be1d530828",
+    "plan": "372d099a-9760-8193-ba47-ca2d700fb12c",
+    "state": "372d099a-9760-8125-ad2e-f445194863f0"
+  },
+  "files": { "context": "CLAUDE.md", "spec": "SPEC.md", "plan": "PLAN.md", "state": "STATE.md" },
+  "last_settled": "2026-06-01T10:52:19Z",
+  "dirty": false
+}

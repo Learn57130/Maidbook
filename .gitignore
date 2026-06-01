@@ -37,3 +37,7 @@ ENV/
 .coverage.*
 .pytest_cache/
 htmlcov/
+
+# agent worktrees / change logs (not product files)
+.claude/worktrees/
+.claude/changes*.log
