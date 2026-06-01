@@ -15,9 +15,9 @@
   },
   "files": {
     "context": "CLAUDE.md",
-    "spec": "SPEC.md",
-    "plan": "PLAN.md",
-    "state": "STATE.md"
+    "spec": ".notion/SPEC.md",
+    "plan": ".notion/PLAN.md",
+    "state": ".notion/STATE.md"
   },
   "last_settled": "2026-06-01T13:54:13Z",
   "dirty": false,
