@@ -1,0 +1,64 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Maidbook — the tidy Mac keeper</title>
+<meta name="description" content="A tidy cache cleaner + health check for macOS. Single-binary TUI, stdlib-only, no install bloat.">
+<link rel="stylesheet" href="site.css">
+</head>
+<body>
+<div class="wrap">
+  <nav class="nav">
+    <span class="brand">● Maidbook</span>
+    <a href="docs.html">Docs</a>
+    <a href="changelog.html">Changelog</a>
+    <a href="https://github.com/Learn57130/Maidbook">GitHub</a>
+    <a href="https://pypi.org/project/maidbook/">PyPI</a>
+  </nav>
+
+  <header class="hero">
+    <img class="logo" src="https://raw.githubusercontent.com/Learn57130/Maidbook/main/assets/logo.png" alt="Maidbook logo">
+    <h1>Maidbook</h1>
+    <p class="tag">the tidy Mac keeper — cache cleaner + health check, stdlib-only, no bloat</p>
+    <a class="btn" href="https://pypi.org/project/maidbook/">Install from PyPI</a>
+    <a class="btn ghost" href="https://github.com/Learn57130/Maidbook">View on GitHub</a>
+  </header>
+
+  <div class="install">
+    <code id="cmd">pip install maidbook</code>
+    <button onclick="navigator.clipboard.writeText('pip install maidbook');this.textContent='copied'">copy</button>
+  </div>
+
+  <div class="card">
+    <pre class="tui">╭─ ● Maidbook ────────────────────────────────────────────────────────╮
+│  the tidy Mac keeper                                                │
+╰─────────────────────────────────────────────────────────────────────╯
+
+● What would you like to do?
+
+  <span class="sel">❯ ● Cache cleaner     free up disk space · safe for cookies, history, logins</span>
+    ○ Health check      malware heuristics · code-sign audit · XProtect · CVE scan
+    ○ Both              clean caches first, then run health check
+    ○ Agent tools       browse Claude / Codex / Gemini skills + MCP server configs
+    ○ Stats             lifetime freed · session history · bloat velocity trend
+    ○ Manage schedule   view or remove the scheduled automatic clean
+
+  <span class="dim">↑/↓ move · ↵ select · q quit</span></pre>
+  </div>
+
+  <section class="features">
+    <div class="feature"><h3>Safe cache clean</h3><p>Browsers keep cookies, history, logins, bookmarks. Only <code>Cache/</code>, <code>Code Cache/</code>, <code>GPUCache/</code> get touched.</p></div>
+    <div class="feature"><h3>Build-artifact discovery</h3><p>Finds <code>node_modules/</code>, <code>target/</code>, <code>venv/</code>, <code>__pycache__</code> across your project roots — each its own selectable row.</p></div>
+    <div class="feature"><h3>Read-only health check</h3><p>XProtect, LaunchAgent heuristics, <code>codesign</code> audit, quarantine review, outdated-package scan. Never modifies files.</p></div>
+    <div class="feature"><h3>Agent tools</h3><p>Browse and prune Claude / Codex / Gemini skills and MCP server configs with explicit confirmation.</p></div>
+  </section>
+
+  <footer>
+    MIT licensed · <a href="docs.html">Docs</a> · <a href="changelog.html">Changelog</a> ·
+    <a href="https://github.com/Learn57130/Maidbook">GitHub</a> ·
+    <a href="https://pypi.org/project/maidbook/">PyPI</a>
+  </footer>
+</div>
+</body>
+</html>
